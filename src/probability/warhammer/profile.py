@@ -1,0 +1,383 @@
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import List, Optional, Union, Protocol, Dict
+from ..dice import DiceFormula, D6, D3
+from copy import deepcopy
+from ..distribution import Distribution
+
+@dataclass
+class DieResult:
+    value: int
+    sequence: Optional['AttackSequence']
+
+    def __str__(self) -> str:
+        if self.sequence is None:
+            return f"Roll({self.value})"
+        return f"Roll({self.value}, {self.sequence})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DieResult):
+            return False
+        return self.value == other.value
+    
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+class AttackStage(Enum):
+    START = auto()
+    ATTACKS = auto()
+    HITS = auto()
+    WOUNDS = auto()
+    FAILED_SAVES = auto()
+    DAMAGE = auto()
+    FELT_DMG = auto()
+    MODELS_SLAIN = auto()
+    COMPLETE = auto()
+    
+    def __lt__(self, other: 'AttackStage') -> bool:
+        if not isinstance(other, AttackStage):
+            return NotImplemented
+        return self.value < other.value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+class Modifier(Protocol):
+    def modify_attacker(self, profile: 'AttackProfile', defender: 'Defender') -> 'AttackProfile':
+        """Modify the attack profile before rolling"""
+        return profile
+        
+    def modify_defender(self, profile: 'AttackProfile', defender: 'Defender') -> 'Defender':
+        """Modify the defender profile before rolling"""
+        return defender
+        
+    def modify_roll(self, value: 'Distribution[DieResult]', stage: 'AttackStage', 
+                   profile: 'AttackProfile', defender: 'Defender', 
+                   prev_sequence: Optional['AttackSequence'] = None) -> 'Distribution[DieResult]':
+        """Modify a roll result"""
+        return value
+
+@dataclass
+class AttackProfile:
+    name: str
+    models: int
+    guns_per_model: int
+    attacks: Union[int, DiceFormula]
+    ballistic_skill: int
+    strength: int
+    armor_pen: int
+    damage: Union[int, DiceFormula]
+    keywords: List[str]
+    modifiers: List[Modifier]
+
+@dataclass
+class DefenderProfile:
+    name: str
+    models: int
+    toughness: int
+    armor_save: int
+    invuln_save: Optional[int]
+    wounds: int
+    keywords: List[str]
+    feel_no_pain: Optional[int]
+    is_leader: bool
+    modifiers: List[Modifier]
+
+@dataclass
+class Attacker:
+    name: str
+    profiles: List[AttackProfile]
+
+    def get_modifiers(self) -> List[Modifier]:
+        return [modifier for profile in self.profiles for modifier in profile.modifiers]
+
+@dataclass
+class Defender:
+    name: str
+    profiles: List[DefenderProfile]
+
+    def get_modifiers(self) -> List[Modifier]:
+        return [modifier for profile in self.profiles for modifier in profile.modifiers]
+
+    def get_highest_toughness(self) -> int:
+        """Get the highest toughness in the unit, prioritizing non-leader models."""
+        non_leader_toughness = [p.toughness for p in self.profiles if not p.is_leader]
+        if non_leader_toughness:
+            return max(non_leader_toughness)
+        
+        # If we only have leader models, use their toughness
+        leader_toughness = [p.toughness for p in self.profiles if p.is_leader]
+        if not leader_toughness:
+            raise ValueError(f"Unit {self.name} has no models with toughness values")
+        return max(leader_toughness)
+    
+    def get_next_profile(self, num_models_slain: int) -> Optional[DefenderProfile]:
+        """Get the next profile to allocate wounds to"""
+        if not self.profiles:
+            return None
+        index = 0
+        current_profile = self.profiles[index]
+        while num_models_slain >= current_profile.models:
+            num_models_slain -= current_profile.models
+            index += 1
+            if index >= len(self.profiles):
+                return None
+            current_profile = self.profiles[index]
+        return current_profile
+
+    def get_wound_cap(self, num_models_slain: int) -> int:
+        if not self.profiles:
+            return 0
+        index = 0
+        wound_cap = 0
+        current_profile = self.profiles[index]
+        while num_models_slain >= current_profile.models:
+            wound_cap += current_profile.wounds * num_models_slain
+            num_models_slain -= current_profile.models
+            index += 1
+            if index >= len(self.profiles):
+                return wound_cap + current_profile.wounds
+            current_profile = self.profiles[index]
+        return wound_cap + current_profile.wounds
+    
+@dataclass(frozen=True)
+class ModelState:
+    """Track state of current model being wounded"""
+    profile: DefenderProfile
+    wounds_remaining: int
+
+@dataclass(frozen=True) 
+class AttackSequence:
+    values: Dict[AttackStage, int]
+    frozen: Dict[AttackStage, int] = field(default_factory=dict)
+    # Add fields to track current model and unit state
+    current_model: Optional[ModelState] = None
+    remaining_models: Dict[DefenderProfile, int] = field(default_factory=dict)
+
+    @classmethod
+    def create(cls, value: int, stage: AttackStage) -> 'AttackSequence':
+        """Create a new sequence with a single value at the given stage"""
+        return cls(values={stage: value})
+
+    def freeze_all(self, stage: AttackStage) -> 'AttackSequence':
+        """Freeze a value at a stage"""
+        new_values = self.values.copy()
+        new_frozen = self.frozen.copy()
+        new_frozen[stage] = self.get_value(stage) + self.get_frozen(stage)
+        new_values[stage] = 0
+        return AttackSequence(values=new_values, frozen=new_frozen)
+
+    
+    def with_value(self, stage: AttackStage, value: int) -> 'AttackSequence':
+        """Add or update a value for a stage"""
+        new_values = self.values.copy()
+        new_values[stage] = value
+        return AttackSequence(values=new_values, frozen=self.frozen)
+
+    def with_frozen(self, stage: AttackStage, value: int) -> 'AttackSequence':
+        """Add or update a frozen value for a stage"""
+        new_frozen = self.frozen.copy()
+        new_frozen[stage] = value
+        return AttackSequence(values=self.values.copy(), frozen=new_frozen)
+    
+    def get_value(self, stage: AttackStage, default: int = 0) -> int:
+        """Get the value for a stage"""
+        return self.values.get(stage, default)
+    
+    def get_frozen(self, stage: AttackStage, default: int = 0) -> int:
+        """Get the frozen value for a stage"""
+        return self.frozen.get(stage, default)
+    
+    def __str__(self) -> str:
+        """Print stages in order, omitting zeros unless all values are zero."""
+        parts = []
+        all_zeros = all(val == 0 for val in self.values.values()) and all(val == 0 for val in self.frozen.values())
+        
+        # Process stages in enum order
+        for stage in sorted(AttackStage):
+            val = self.get_value(stage)
+            frozen_val = self.get_frozen(stage)
+
+            if stage in self.values or stage in self.frozen:
+                if frozen_val != 0:
+                    parts.append(f"{stage.name}:{val}+{frozen_val}*")
+                else:                            
+                    parts.append(f"{stage.name}:{val}")
+        
+        return f"[{', '.join(parts)}]"
+
+    def __add__(self, other: 'AttackSequence') -> 'AttackSequence':
+        """Combine two sequences by adding their values.
+        Both sequences must be at the same stage.
+        """
+            
+        # Combine all values from both sequences
+        new_values = self.values.copy()
+        new_frozen = {}
+        for stage, value in set(self.values.items()) | set(other.values.items()):
+            new_values[stage] = self.get_value(stage) + other.get_value(stage)
+        
+            
+        for stage, value in set(self.frozen.items()) | set(other.frozen.items()):
+            new_frozen[stage] = self.get_frozen(stage) + other.get_frozen(stage)
+            
+
+        return AttackSequence(values=new_values, frozen=new_frozen)
+
+    def __hash__(self) -> int:
+        # Convert dict to tuple of tuples for hashing
+        items = tuple(sorted((stage, value) for stage, value in self.values.items()))
+        return hash(items)
+        
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AttackSequence):
+            return NotImplemented
+        return self.values == other.values
+
+# Example modifiers
+@dataclass
+class RerollOnes:
+    """Reroll 1s for a specific stage"""
+    stage: AttackStage
+    
+    def modify_roll(self, value: Distribution[DieResult], stage: 'AttackStage', 
+                   profile: 'AttackProfile', defender: 'DefenderProfile',
+                   prev_sequence: Optional['AttackSequence'] = None) -> Distribution[DieResult]:
+        if stage != self.stage:
+            return value
+        
+        return value.bind_on_match(DieResult(1, prev_sequence), lambda _: value)
+
+
+@dataclass
+class LethalHits(Modifier):
+    """Automatically wound on hit rolls of 6"""
+    
+    def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 
+                   profile: AttackProfile, defender: DefenderProfile,
+                   prev_sequence: Optional[AttackSequence] = None) -> Distribution[DieResult]:
+        
+        if stage != AttackStage.HITS:
+            return value
+        print("LethalHits", value)
+        return value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
+            AttackSequence.create(1, AttackStage.WOUNDS)
+            .with_frozen(AttackStage.HITS, 1))))
+
+@dataclass
+class DevastatingWounds(Modifier):
+    """On wound rolls of 6, ignore armor saves"""
+    
+    def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 
+                   profile: AttackProfile, defender: DefenderProfile,
+                   prev_sequence: Optional[AttackSequence] = None) -> Distribution[DieResult]:
+        
+        if stage != AttackStage.WOUNDS:
+            return value
+            
+        return value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
+            AttackSequence.create(1, AttackStage.FAILED_SAVES)
+            .with_frozen(AttackStage.WOUNDS, 1))))
+
+SPACE_MARINE_PROFILE = DefenderProfile(
+    name="Space Marine",
+    models=1,
+    toughness=4,
+    armor_save=3,
+    invuln_save=None,
+    wounds=2,
+    feel_no_pain=None,
+    modifiers=[],
+    keywords=[],
+    is_leader=False
+)
+
+SPACE_MARINE = Defender(
+    name="Space Marine",
+    profiles=[SPACE_MARINE_PROFILE]
+)
+
+GUARDSMAN_PROFILE = DefenderProfile(
+    name="Guardsman",
+    models=3,
+    toughness=3,
+    armor_save=4,
+    invuln_save=None,
+    wounds=1,
+    feel_no_pain=5,
+    modifiers=[],
+    keywords=[],
+    is_leader=False
+)
+
+GUARDSMAN = Defender(
+    name="Guardsman",
+    profiles=[GUARDSMAN_PROFILE]
+)
+
+# Example profiles
+BOLTER = AttackProfile(
+    name="Bolter",
+    models=1,
+    guns_per_model=1,
+    attacks=2,  # Fixed 2 shots
+    ballistic_skill=3,
+    strength=4,
+    armor_pen=0,
+    damage=1,  # Fixed 1 damage
+    modifiers=[],
+    keywords=[]
+)
+
+PLASMA_CANNON = AttackProfile(
+    name="Plasma Cannon",
+    models=1,
+    guns_per_model=1,
+    attacks=D6,  # D6 shots
+    ballistic_skill=3,
+    strength=7,
+    armor_pen=2,
+    damage=2,  # Fixed 2 damage
+    modifiers=[],
+    keywords=[]
+)
+
+THUNDER_HAMMER = AttackProfile(
+    name="Thunder Hammer",
+    models=1,
+    guns_per_model=1,
+    attacks=4,  # Fixed 4 attacks
+    ballistic_skill=4,
+    strength=8,
+    armor_pen=2,
+    damage=DiceFormula(1, 3, 3),  # D3+3 damage
+    modifiers=[],
+    keywords=[]
+) 
+
+LASGUN = AttackProfile(
+    name="Lasgun",
+    models=1,
+    guns_per_model=1,
+    attacks=2,
+    ballistic_skill=4,
+    strength=3,
+    armor_pen=0,
+    damage=1,
+    modifiers=[],
+    keywords=[]
+)
+
+LASGUN_BARRAGE = AttackProfile(
+    name="Lasgun Barrage",
+    models=1,
+    guns_per_model=1,
+    attacks=20,
+    ballistic_skill=4,
+    strength=3,
+    armor_pen=0,
+    damage=2,
+    modifiers=[],
+    keywords=[]
+)
+

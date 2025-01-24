@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DiceDiceBaby - Warhammer Probability Calculator</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body>
+    <h1>DiceDiceBaby</h1>
+    <div class="content">
+        <h2>Probability Example</h2>
+        <p>Hit roll distribution for default profile:</p>
+        <pre>{{ hit_distribution }}</pre>
+    </div>
+</body>
+</html> 

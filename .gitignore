@@ -1,0 +1,6 @@
+.stack-work/
+*~
+*.sqlite
+*.sqlite3
+database.db
+dist-newstyle/ 
