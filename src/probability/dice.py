@@ -7,6 +7,10 @@ class DiceFormula:
     num_dice: int
     sides: int
     modifier: int = 0
+
+    @classmethod
+    def constant(cls, value: int) -> "DiceFormula":
+        return cls(0, 0, value)
     
     def __str__(self) -> str:
         base = f"{self.num_dice if self.num_dice > 1 else ''}D{self.sides}"
@@ -22,6 +26,8 @@ class DiceFormula:
             base_dist = d6
         elif self.sides == 3:
             base_dist = d3
+        elif self.sides == 1:
+            base_dist = Distribution.singleton(self.modifier)
         else:
             base_dist = Distribution.uniform(list(range(1, self.sides + 1)))
             

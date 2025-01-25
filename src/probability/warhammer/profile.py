@@ -9,6 +9,8 @@ from ..distribution import Distribution
 class DieResult:
     value: int
     sequence: Optional['AttackSequence']
+    passes_check: Union[bool, None] = None
+
 
     def __str__(self) -> str:
         if self.sequence is None:
@@ -22,6 +24,16 @@ class DieResult:
     
     def __hash__(self) -> int:
         return hash(self.value)
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, DieResult):
+            return False
+        return self.value < other.value
+    
+    def __add__(self, other: object) -> 'DieResult':
+        if not isinstance(other, DieResult):
+            return NotImplemented
+        return DieResult(self.value + other.value, self.sequence + other.sequence if self.sequence is not None and other.sequence is not None else None)
 
 class AttackStage(Enum):
     START = auto()
@@ -57,16 +69,17 @@ class Modifier(Protocol):
         """Modify a roll result"""
         return value
 
+   
 @dataclass
 class AttackProfile:
     name: str
     models: int
     guns_per_model: int
-    attacks: Union[int, DiceFormula]
+    attacks: DiceFormula
     ballistic_skill: int
     strength: int
     armor_pen: int
-    damage: Union[int, DiceFormula]
+    damage: DiceFormula
     keywords: List[str]
     modifiers: List[Modifier]
 
@@ -82,6 +95,9 @@ class DefenderProfile:
     feel_no_pain: Optional[int]
     is_leader: bool
     modifiers: List[Modifier]
+
+    def total_wounds(self) -> int:
+        return self.wounds * self.models
 
 @dataclass
 class Attacker:
@@ -139,6 +155,9 @@ class Defender:
                 return wound_cap + current_profile.wounds
             current_profile = self.profiles[index]
         return wound_cap + current_profile.wounds
+
+    def total_wounds(self) -> int:
+        return sum(p.total_wounds() for p in self.profiles)
     
 @dataclass(frozen=True)
 class ModelState:
@@ -158,6 +177,10 @@ class AttackSequence:
     def create(cls, value: int, stage: AttackStage) -> 'AttackSequence':
         """Create a new sequence with a single value at the given stage"""
         return cls(values={stage: value})
+
+    def clear_frozen(self) -> 'AttackSequence':
+        """Clear all frozen values"""
+        return AttackSequence(values=self.values, frozen={})
 
     def freeze_all(self, stage: AttackStage) -> 'AttackSequence':
         """Freeze a value at a stage"""
@@ -212,7 +235,7 @@ class AttackSequence:
         """
             
         # Combine all values from both sequences
-        new_values = self.values.copy()
+        new_values = {}
         new_frozen = {}
         for stage, value in set(self.values.items()) | set(other.values.items()):
             new_values[stage] = self.get_value(stage) + other.get_value(stage)
@@ -226,13 +249,31 @@ class AttackSequence:
 
     def __hash__(self) -> int:
         # Convert dict to tuple of tuples for hashing
-        items = tuple(sorted((stage, value) for stage, value in self.values.items()))
-        return hash(items)
+        items = tuple(sorted((stage, value) for stage, value in self.values.items() if value != 0))
+        frozen_items = tuple(sorted((stage, value) for stage, value in self.frozen.items() if value != 0))
+        return hash(items + frozen_items)
         
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, AttackSequence):
             return NotImplemented
-        return self.values == other.values
+        return self.__hash__() == other.__hash__()
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, AttackSequence):
+            return NotImplemented
+            
+        # Get all stages that appear in either sequence
+        all_stages = sorted(set(self.values.keys()) | set(self.frozen.keys()) | 
+                          set(other.values.keys()) | set(other.frozen.keys()))
+        
+        # Compare stage by stage
+        for stage in all_stages:
+            self_total = self.get_value(stage) + self.get_frozen(stage)
+            other_total = other.get_value(stage) + other.get_frozen(stage)
+            if self_total != other_total:
+                return self_total < other_total
+                
+        return False  # Equal sequences
 
 # Example modifiers
 @dataclass
@@ -248,6 +289,24 @@ class RerollOnes:
         
         return value.bind_on_match(DieResult(1, prev_sequence), lambda _: value)
 
+@dataclass
+class RerollAllFails(Modifier):
+
+    stage: AttackStage
+
+    def modify_roll(self, value: Distribution[DieResult], stage: 'AttackStage', 
+                   profile: 'AttackProfile', defender: 'DefenderProfile',
+                   prev_sequence: Optional['AttackSequence'] = None) -> Distribution[DieResult]:
+        if stage != self.stage:
+            return value
+        
+        def reroll_fail(result: DieResult) -> Distribution[DieResult]:
+            if result.passes_check:
+                return Distribution.singleton(result)
+            return value
+
+        result = value.bind(reroll_fail)
+        return result
 
 @dataclass
 class LethalHits(Modifier):
@@ -259,10 +318,11 @@ class LethalHits(Modifier):
         
         if stage != AttackStage.HITS:
             return value
-        print("LethalHits", value)
-        return value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
+
+        result = value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
             AttackSequence.create(1, AttackStage.WOUNDS)
-            .with_frozen(AttackStage.HITS, 1))))
+            .with_frozen(AttackStage.HITS, 1), True)))
+        return result
 
 @dataclass
 class DevastatingWounds(Modifier):
@@ -299,7 +359,7 @@ SPACE_MARINE = Defender(
 
 GUARDSMAN_PROFILE = DefenderProfile(
     name="Guardsman",
-    models=3,
+    models=5,
     toughness=3,
     armor_save=4,
     invuln_save=None,
@@ -320,11 +380,11 @@ BOLTER = AttackProfile(
     name="Bolter",
     models=1,
     guns_per_model=1,
-    attacks=2,  # Fixed 2 shots
+    attacks=DiceFormula.constant(2),  # Fixed 2 shots
     ballistic_skill=3,
     strength=4,
     armor_pen=0,
-    damage=1,  # Fixed 1 damage
+    damage=DiceFormula.constant(1),  # Fixed 1 damage
     modifiers=[],
     keywords=[]
 )
@@ -337,7 +397,7 @@ PLASMA_CANNON = AttackProfile(
     ballistic_skill=3,
     strength=7,
     armor_pen=2,
-    damage=2,  # Fixed 2 damage
+    damage=DiceFormula.constant(2),  # Fixed 2 damage
     modifiers=[],
     keywords=[]
 )
@@ -346,7 +406,7 @@ THUNDER_HAMMER = AttackProfile(
     name="Thunder Hammer",
     models=1,
     guns_per_model=1,
-    attacks=4,  # Fixed 4 attacks
+    attacks=DiceFormula.constant(4),  # Fixed 4 attacks
     ballistic_skill=4,
     strength=8,
     armor_pen=2,
@@ -359,11 +419,11 @@ LASGUN = AttackProfile(
     name="Lasgun",
     models=1,
     guns_per_model=1,
-    attacks=2,
+    attacks=DiceFormula.constant(2),
     ballistic_skill=4,
     strength=3,
     armor_pen=0,
-    damage=1,
+    damage=DiceFormula.constant(1),
     modifiers=[],
     keywords=[]
 )
@@ -372,12 +432,14 @@ LASGUN_BARRAGE = AttackProfile(
     name="Lasgun Barrage",
     models=1,
     guns_per_model=1,
-    attacks=20,
+    attacks=DiceFormula.constant(20),
     ballistic_skill=4,
     strength=3,
     armor_pen=0,
-    damage=2,
-    modifiers=[],
+    damage=DiceFormula.constant(2),
+    modifiers=[RerollAllFails(AttackStage.HITS)],
     keywords=[]
 )
+
+
 
