@@ -21,11 +21,17 @@ class Sortable(Protocol):
 
 S = TypeVar('S', bound=Sortable)
 
+class Box(Generic[T]):
+    def __init__(self, value: T):
+        self.value = value
+
+
+EPSILON = Fraction(1, 100000000000000)
+PRUNE_FACTOR: Box[Fraction | None] = Box(Fraction(1, 100000))
 
 @dataclass
 class Distribution(Generic[T]):
-    EPSILON = Fraction(1, 100000000000000)
-    PRUNE_FACTOR = Fraction(1, 100000)
+
 
     probabilities: Dict[T, Fraction]
     
@@ -130,10 +136,13 @@ class Distribution(Generic[T]):
         return Distribution({x: p * scale for x, p in self.probabilities.items()})
 
     def prune(self) -> 'Distribution[T]':
+
+        if PRUNE_FACTOR.value is None:
+            return self
         
         max_prob = max(self.probabilities.values())
         # eliminate items with probability less than max_prob * PRUNE_FACTOR
-        result = Distribution({x: p for x, p in self.probabilities.items() if p > max_prob * self.PRUNE_FACTOR})
+        result = Distribution({x: p for x, p in self.probabilities.items() if p > max_prob * PRUNE_FACTOR.value})
         
         return result
         
@@ -199,7 +208,13 @@ def memoize(f: F) -> F:
         
     return wrapper  # type: ignore
 
-def lift(f: Callable[[T], 'Distribution[U]']) -> Callable[['Distribution[T]'], 'Distribution[U]']:
+
+def lift(f: Callable[[T], U]) -> Callable[['Distribution[T]'], 'Distribution[U]']:
+    def lifted(dist: Distribution[T]) -> Distribution[U]:
+        return dist.map(f)
+    return lifted
+
+def liftM(f: Callable[[T], 'Distribution[U]']) -> Callable[['Distribution[T]'], 'Distribution[U]']:
     """Lift a function T -> Distribution[U] to Distribution[T] -> Distribution[U].
     
     This is equivalent to Kleisli composition with return/singleton.

@@ -115,6 +115,14 @@ class Defender:
     def get_modifiers(self) -> List[Modifier]:
         return [modifier for profile in self.profiles for modifier in profile.modifiers]
 
+    def multiple_save_profiles(self) -> bool:       
+        first_armor_save = self.profiles[0].armor_save
+        first_invuln_save = self.profiles[0].invuln_save
+        for profile in self.profiles[1:]:
+            if profile.armor_save != first_armor_save or profile.invuln_save != first_invuln_save:
+                return True
+        return False
+
     def get_highest_toughness(self) -> int:
         """Get the highest toughness in the unit, prioritizing non-leader models."""
         non_leader_toughness = [p.toughness for p in self.profiles if not p.is_leader]
@@ -188,6 +196,15 @@ class AttackSequence:
         new_frozen = self.frozen.copy()
         new_frozen[stage] = self.get_value(stage) + self.get_frozen(stage)
         new_values[stage] = 0
+        return AttackSequence(values=new_values, frozen=new_frozen)
+
+    def freeze_one(self, stage: AttackStage) -> 'AttackSequence':
+        """Freeze a value at a stage"""
+        new_values = self.values.copy()
+        new_frozen = self.frozen.copy()
+        amount = min(self.get_value(stage), 1)
+        new_frozen[stage] = amount + self.get_frozen(stage)
+        new_values[stage] = self.get_value(stage) - amount
         return AttackSequence(values=new_values, frozen=new_frozen)
 
     
