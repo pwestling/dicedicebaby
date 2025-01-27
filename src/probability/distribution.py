@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import Dict, TypeVar, Callable, List, Generic, Tuple, Any, Protocol, Literal
+from typing import Dict, TypeVar, Callable, List, Generic, Tuple, Any, Protocol, Literal, ClassVar
 from fractions import Fraction
 from multiprocessing import Pool
 from itertools import product
 from functools import partial, wraps
+import random
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -17,7 +18,7 @@ F = TypeVar('F', bound=Callable[..., Any])  # Function type
 repeat_cache: Dict[Tuple['Distribution', int], 'Distribution'] = {}
 
 class Sortable(Protocol):
-    def __lt__(self: T, other: Any) -> bool: ...
+    def __lt__(self: Any, other: Any) -> bool: ...
 
 S = TypeVar('S', bound=Sortable)
 
@@ -26,15 +27,15 @@ class Box(Generic[T]):
         self.value = value
 
 
-EPSILON = Fraction(1, 100000000000000)
-PRUNE_FACTOR: Box[Fraction | None] = Box(Fraction(1, 100000))
-
 @dataclass
 class Distribution(Generic[T]):
 
+    EPSILON : ClassVar[Fraction] = Fraction(1, 100000000000000)
+    PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 100000)
+
 
     probabilities: Dict[T, Fraction]
-    
+
     def __str__(self) -> str:
         joiner = ",\n"
 
@@ -106,6 +107,12 @@ class Distribution(Generic[T]):
             accum = accum.combine(self, lambda x, y: x + y)
         return accum
 
+    def choose(self, always_choose: bool = False) -> T:
+        return random.choices(list(self.probabilities.keys()), weights=list(self.probabilities.values()))[0]
+
+    def collapse_to_choice(self) -> 'Distribution[T]':
+        return Distribution.singleton(self.choose())
+
 
     def combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
         result: Dict[U, Fraction] = {}
@@ -137,12 +144,12 @@ class Distribution(Generic[T]):
 
     def prune(self) -> 'Distribution[T]':
 
-        if PRUNE_FACTOR.value is None:
+        if Distribution.PRUNE_FACTOR is None:
             return self
         
         max_prob = max(self.probabilities.values())
         # eliminate items with probability less than max_prob * PRUNE_FACTOR
-        result = Distribution({x: p for x, p in self.probabilities.items() if p > max_prob * PRUNE_FACTOR.value})
+        result = Distribution({x: p for x, p in self.probabilities.items() if p > max_prob * Distribution.PRUNE_FACTOR})
         
         return result
         
