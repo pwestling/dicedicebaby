@@ -1,11 +1,13 @@
 from .profile import *
 from ..distribution import Distribution, d6, memoize, liftM, lift, Box
-from typing import List, Optional, Callable, TypeVar, Union, Dict
+from typing import List, Optional, Callable, TypeVar, Union, Dict, Any
 from fractions import Fraction
 from ..dice import DiceFormula
 from functools import partial
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from time import perf_counter
+import sys
+import json
 
 
 def get_wound_threshold(strength: int, toughness: int) -> int:
@@ -104,34 +106,15 @@ def roll_to_wound(hit_dist: Distribution[AttackSequence], profile: AttackProfile
 
     return hit_dist.bind(perform_rolls_bind(AttackStage.HITS, single_wound_roll))
 
-# only valid if all defenders have the same save profile
-def roll_to_save(hit_dist: Distribution[AttackSequence], profile: AttackProfile, 
-                 defender: Defender, modifiers: List[Modifier]) -> Distribution[AttackSequence]:
-
-    current_defender_profile: DefenderProfile = defender.get_next_profile(0) #type: ignore
-
-    armor_save_threshold = current_defender_profile.armor_save + profile.armor_pen
-    if current_defender_profile.invuln_save is not None:
-        armor_save_threshold = min(armor_save_threshold, current_defender_profile.invuln_save)    
-    # Create distribution for a single wound roll
-    save_roll = d6.filter(
-        pred=lambda x: x >= armor_save_threshold,
-        if_true=lambda x: DieResult(x, AttackSequence({AttackStage.FAILED_SAVES: 0}), True),  # Save successful - no damage
-        if_false=lambda x: DieResult(x, AttackSequence({AttackStage.FAILED_SAVES: 1}), False)   # Save failed - wound goes through
-    )
-    save_roll = apply_modifiers(save_roll, AttackStage.FAILED_SAVES, profile, defender, modifiers)
-    
-
-    return hit_dist.bind(perform_rolls_bind(AttackStage.WOUNDS, save_roll))
 
 def unwrap_die_result(dist: Distribution[DieResult]) -> Distribution[AttackSequence]:
     return dist.map(lambda x: x.sequence if x.sequence else AttackSequence.create(0, AttackStage.DAMAGE))
 
 class AttackConfig:
     batch_save_roll = True
-    simulate_actual_rolls = False
-        
-def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], allow_batch: bool, state: AttackSequence) -> Distribution[AttackSequence]:
+    batch_damage_roll = True
+
+def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
     current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
     if not current_defender_profile or state.get_value(AttackStage.WOUNDS) == 0:
         return Distribution.singleton(state)
@@ -146,17 +129,22 @@ def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifi
     )
     save_roll = apply_modifiers(save_roll, AttackStage.FAILED_SAVES, profile, defender, modifiers)
     
-    if AttackConfig.simulate_actual_rolls:
-        save_roll = save_roll.collapse_to_choice()
-    
-    if state.get_value(AttackStage.FAILED_SAVES) > 0:
-        return Distribution.singleton(state)
-    next_state = state.freeze_one(AttackStage.WOUNDS)
-    result = save_roll.map(lambda x: (x.sequence + next_state) if x.sequence else next_state)
-    return result
+    if defender.multiple_save_profiles() or not AttackConfig.batch_save_roll:
+        if state.get_value(AttackStage.FAILED_SAVES) > 0:
+            return Distribution.singleton(state)
+        next_state = state.freeze_one(AttackStage.WOUNDS)
+        result = save_roll.map(lambda x: (x.sequence + next_state) if x.sequence else next_state)
+        return result
+    else:
+        return perform_rolls(AttackStage.WOUNDS, save_roll, state)
+
+def batch_damage_allowed(defender: Defender, profile: AttackProfile) -> bool:
+    return not defender.has_any_fnp() and \
+        not profile.damage.is_variable() and \
+        not defender.multiple_wound_profiles() and \
+        AttackConfig.batch_damage_roll
 
 def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
-    
     current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
     if not current_defender_profile or state.get_value(AttackStage.FAILED_SAVES) == 0:
         return Distribution.singleton(state)
@@ -164,17 +152,21 @@ def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modi
     next_state = state.freeze_one(AttackStage.FAILED_SAVES)
     
     damage_dist = profile.damage.roll()
-    
     damage_rolls = damage_dist.map(lambda n: DieResult(n, AttackSequence({AttackStage.DAMAGE: n})))
     damage_rolls = apply_modifiers(damage_rolls, AttackStage.DAMAGE, profile, defender, modifiers)
-    damage_rolls = unwrap_die_result(damage_rolls)
-
-    if AttackConfig.simulate_actual_rolls:
-        damage_rolls = damage_rolls.collapse_to_choice()
-
     
-    result = damage_rolls.map(lambda x: x + next_state)
-    return result
+    if not batch_damage_allowed(defender, profile):
+        damage_rolls = unwrap_die_result(damage_rolls)
+        result = damage_rolls.map(lambda x: x + next_state)
+        return result
+    else:
+        d = profile.damage.modifier
+        while d < current_defender_profile.wounds:
+            d += profile.damage.modifier
+        damage_ignored_per_model = d - current_defender_profile.wounds
+        
+        result = perform_rolls(AttackStage.FAILED_SAVES, damage_rolls, state)
+        return result
 
 
 def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
@@ -188,12 +180,8 @@ def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifie
         if_false=lambda x: DieResult(x, AttackSequence({AttackStage.FELT_DMG: 1}), False)   # FNP failed - damage goes through
     )
     fnp_roll = apply_modifiers(fnp_roll, AttackStage.FELT_DMG, profile, defender, modifiers)
-
-    if AttackConfig.simulate_actual_rolls:
-        fnp_roll = fnp_roll.collapse_to_choice()
     
     result = perform_rolls(AttackStage.DAMAGE, fnp_roll, state)
-
 
     wound_cap = current_defender_profile.wounds
     def cap_dmg_felt(seq: AttackSequence) -> AttackSequence:
@@ -212,8 +200,8 @@ def slay_models(defender: Defender, profile: AttackProfile, modifiers: List[Modi
     defender_wounds = current_defender_profile.wounds
     result : AttackSequence
     if state.get_value(AttackStage.FELT_DMG) >= defender_wounds:
-        result = state.with_value(AttackStage.MODELS_SLAIN, state.get_value(AttackStage.MODELS_SLAIN) + 1) \
-            .with_value(AttackStage.FELT_DMG, min(state.get_value(AttackStage.FELT_DMG), defender_wounds)) \
+        num_slain : int = state.get_value(AttackStage.FELT_DMG) // defender_wounds
+        result = state.with_value(AttackStage.MODELS_SLAIN, state.get_value(AttackStage.MODELS_SLAIN) + num_slain) \
             .freeze_all(AttackStage.FELT_DMG)
     else:
         result = state
@@ -225,20 +213,20 @@ state_cache = {}
 
 def do_dmg_sequence(wound_dist: Distribution[AttackSequence], defender: Defender, profile: AttackProfile, modifiers: List[Modifier], timing: 'TimingInfo') -> Distribution[AttackSequence]:
     """Run the damage sequence with timing information"""
-    allow_batch = not defender.multiple_save_profiles() and AttackConfig.batch_save_roll
+    allow_batch_saves = not defender.multiple_save_profiles() and AttackConfig.batch_save_roll
+    allow_batch_damage = not defender.has_any_fnp() and AttackConfig.batch_damage_roll
 
-    save_roll_fn = liftM(memoize(partial(save_roll, defender, profile, modifiers, allow_batch)))
+
+    save_roll_fn = liftM(memoize(partial(save_roll, defender, profile, modifiers)))
     damage_roll_fn = liftM(memoize(partial(damage_roll, defender, profile, modifiers)))
     fnp_roll_fn = liftM(memoize(partial(fnp_roll, defender, profile, modifiers)))
     slay_models_fn = lift(memoize(partial(slay_models, defender, profile, modifiers)))
 
-    if allow_batch:
-        save_start = perf_counter()
-        wound_dist = roll_to_save(wound_dist, profile, defender, modifiers)
-        timing.save_roll_time = perf_counter() - save_start
-        if AttackConfig.simulate_actual_rolls:
-            wound_dist = wound_dist.collapse_to_choice()
-        save_roll_fn = lambda d: d
+    # if allow_batch_saves:
+    #     save_start = perf_counter()
+    #     wound_dist = roll_to_save(wound_dist, profile, defender, modifiers)
+    #     timing.save_roll_time = perf_counter() - save_start
+    #     save_roll_fn = lambda d: d
 
     current = wound_dist
     while True:
@@ -310,6 +298,12 @@ class TimingInfo:
             "total": self.total_time
         }
 
+    def __str__(self) -> str:
+        result = ["\nTiming:"]
+        for stage, time in self.breakdown.items():
+            result.append(f"  {stage}: {time:.3f}s") 
+        return "\n".join(result)
+
 @dataclass
 class AttackResults:
     attacks: Distribution[AttackSequence]
@@ -332,9 +326,7 @@ class AttackResults:
             result.append(f"\n{name}:")
             result.append(str(dist))
             
-        result.append("\nTiming:")
-        for stage, time in self.timing.breakdown.items():
-            result.append(f"  {stage}: {time:.3f}s")
+        result.append(str(self.timing))
             
         return "\n".join(result)
     
@@ -382,18 +374,6 @@ class AttackResults:
 
 
 
-def run_n_simulations(n: int, attack_profile: AttackProfile, defender: Defender, modifiers: List[Modifier]) -> AttackResults:
-    AttackConfig.simulate_actual_rolls = True
-    results = simulate_attacks(attack_profile, defender, modifiers)
-    for _ in range(n - 1):
-        print(f"Running simulation {_ + 1} of {n}")
-        result_of_run = simulate_attacks(attack_profile, defender, modifiers)
-        results += result_of_run
-    results = results.normalize()
-    return results
-
-
-
 def simulate_attacks(
     attack_profile: AttackProfile,
     defender: Defender,
@@ -410,14 +390,8 @@ def simulate_attacks(
     attack_dist = roll_for_attacks(attack_profile, modifiers).prune()
     attack_time = perf_counter() - attack_start
 
-    if AttackConfig.simulate_actual_rolls:
-        attack_dist = attack_dist.collapse_to_choice()
-    
     hit_start = perf_counter()
     hit_dist = roll_to_hit(attack_dist, attack_profile, defender, modifiers).prune()
-    
-    if AttackConfig.simulate_actual_rolls:
-        hit_dist = hit_dist.collapse_to_choice()
     
     cleaned_hit_dist = hit_dist.map(lambda x: x.clear_frozen()).prune()
     hit_time = perf_counter() - hit_start
@@ -425,8 +399,6 @@ def simulate_attacks(
     
     wound_start = perf_counter()
     wound_dist = roll_to_wound(cleaned_hit_dist, attack_profile, defender, modifiers).prune()
-    if AttackConfig.simulate_actual_rolls:
-        wound_dist = wound_dist.collapse_to_choice()
     cleaned_wound_dist = wound_dist.map(lambda x: x.clear_frozen()).prune()
     wound_time = perf_counter() - wound_start
     
@@ -455,311 +427,92 @@ def simulate_attacks(
         timing=timing
     )
 
-def full_demo() -> None:
-    results = simulate_attacks(LASGUN_BARRAGE, GUARDSMAN)
-    print("Number of attacks:")
-    print(results.attacks)
-    
-    print("\nAfter hit rolls:")
-    print(results.hits)
-    print("\nCollapsed hit rolls:")
-    print(results.collapsed_hits)
-    
-    print("\nAfter wound rolls:")
-    print(results.wounds)
-    print("\nCollapsed wound rolls:")
-    print(results.collapsed_wounds)
-    
-    print("\nAfter damage rolls:")
-    print(results.damage)
-    print("\nCollapsed failed saves:")
-    print(results.collapsed_failed_saves)
-    print("\nCollapsed damage:")
-    print(results.collapsed_damage)
-    print("\nCollapsed felt damage:")
-    print(results.collapsed_felt_damage)
-    print("\nCollapsed slain models:")
-    print(results.collapsed_slain_models)
-
-@dataclass
-class ExpectedProbability:
-    stage: AttackStage
-    value: int
-    probability: float
-    tolerance: float = 0.01
-
-@dataclass
-class TestCase:
-    name: str
-    attack_profile: AttackProfile
-    defender: Defender
-    modifiers: List[Modifier]
-    expected: List[ExpectedProbability]
-
-def check_probability(results: AttackResults, expected: ExpectedProbability) -> bool:
-    """Check if a specific probability in the results matches expected within tolerance"""
-    if expected.stage == AttackStage.HITS:
-        dist = results.collapsed_hits
-    elif expected.stage == AttackStage.WOUNDS:
-        dist = results.collapsed_wounds
-    elif expected.stage == AttackStage.FAILED_SAVES:
-        dist = results.collapsed_failed_saves
-    elif expected.stage == AttackStage.DAMAGE:
-        dist = results.collapsed_damage
-    elif expected.stage == AttackStage.FELT_DMG:
-        dist = results.collapsed_felt_damage
-    elif expected.stage == AttackStage.MODELS_SLAIN:
-        dist = results.collapsed_slain_models
-    else:
-        raise ValueError(f"Unsupported stage for testing: {expected.stage}")
-
-    actual = 0.0
-    for seq, prob in dist.probabilities.items():
-        if seq.get_value(expected.stage) == expected.value:
-            actual = float(prob)
-            break
-
-    diff = abs(actual - expected.probability)
-    if diff > expected.tolerance:
-        print(f"Failed: {expected.stage} = {expected.value}")
-        print(f"Expected: {expected.probability}")
-        print(f"Got: {actual}")
-        print(f"Diff: {diff}")
-        return False
-    return True
-
-def run_test_case(test: TestCase) -> bool:
-    """Run a single test case and check all expected probabilities"""
-    print(f"\nRunning test: {test.name}")
-    results = simulate_attacks(test.attack_profile, test.defender, test.modifiers)
-    all_passed = True
-    for exp in test.expected:
-        if not check_probability(results, exp):
-            all_passed = False
-    
-    return all_passed
-
-def run_test_suite() -> None:
-    prev_prune_factor = Distribution.PRUNE_FACTOR
-    # PRUNE_FACTOR.value = None
-    """Run all test cases"""
-    basic_profile = AttackProfile(
-        name="Test Profile",
-        models=1,
-        guns_per_model=1,
-        attacks=DiceFormula.constant(7),
-        ballistic_skill=4,
-        strength=3,
-        armor_pen=0,
-        damage=DiceFormula.constant(2),
-        modifiers=[RerollAllFails(AttackStage.HITS), LethalHits(), DevastatingWounds()],
-        keywords=[]
-    )
-
-    defender = Defender(
-        name="Test Defender",
-        profiles=[DefenderProfile(
-            name="Test Model",
-            models=20,
-            toughness=3,
-            armor_save=4,
-            invuln_save=None,
-            wounds=1,
-            feel_no_pain=5,
-            modifiers=[],
-            keywords=[],
-            is_leader=False
-        )]
-    )
-
-    test_cases = [
-        TestCase(
-            name="Basic 7 attacks",
-            attack_profile=basic_profile,
-            defender=defender,
-            modifiers=[],
-            expected=[
-                # Hit results
-                ExpectedProbability(AttackStage.HITS, 0, 0.00006103515625),
-                ExpectedProbability(AttackStage.HITS, 1, 0.00128173828125),
-                ExpectedProbability(AttackStage.HITS, 2, 0.01153564453125),
-                ExpectedProbability(AttackStage.HITS, 3, 0.05767822265625),
-                ExpectedProbability(AttackStage.HITS, 4, 0.17303466796875),
-                ExpectedProbability(AttackStage.HITS, 5, 0.31146240234375),
-                ExpectedProbability(AttackStage.HITS, 6, 0.31146240234375),
-                ExpectedProbability(AttackStage.HITS, 7, 0.13348388671875),
-                
-                # Wound results
-                ExpectedProbability(AttackStage.WOUNDS, 0, 0.0078125),
-                ExpectedProbability(AttackStage.WOUNDS, 1, 0.0546875),
-                ExpectedProbability(AttackStage.WOUNDS, 2, 0.1640625),
-                ExpectedProbability(AttackStage.WOUNDS, 3, 0.2734375),
-                ExpectedProbability(AttackStage.WOUNDS, 4, 0.2734375),
-                ExpectedProbability(AttackStage.WOUNDS, 5, 0.1640625),
-                ExpectedProbability(AttackStage.WOUNDS, 6, 0.0546875),
-                ExpectedProbability(AttackStage.WOUNDS, 7, 0.00781208137752915),
-                
-                # Failed saves
-                ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.08946718186289958),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.2578759947812988),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.318552699435722),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.21861459765196609),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.0900157087176373),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.022232902813852855),
-                ExpectedProbability(AttackStage.FAILED_SAVES, 6, 0.0030467831363588625),
-                
-                # Damage results
-                ExpectedProbability(AttackStage.DAMAGE, 0, 0.08946718186289958),
-                ExpectedProbability(AttackStage.DAMAGE, 2, 0.2578759947812988),
-                ExpectedProbability(AttackStage.DAMAGE, 4, 0.318552699435722),
-                ExpectedProbability(AttackStage.DAMAGE, 6, 0.21861459765196609),
-                ExpectedProbability(AttackStage.DAMAGE, 8, 0.0900157087176373),
-                ExpectedProbability(AttackStage.DAMAGE, 10, 0.022232902813852855),
-                
-                # Felt damage
-                ExpectedProbability(AttackStage.FELT_DMG, 0, 0.12236508717748674),
-                ExpectedProbability(AttackStage.FELT_DMG, 1, 0.29979449212130976),
-                ExpectedProbability(AttackStage.FELT_DMG, 2, 0.3147854245032073),
-                ExpectedProbability(AttackStage.FELT_DMG, 3, 0.18362324508497507),
-                ExpectedProbability(AttackStage.FELT_DMG, 4, 0.06426789895234573),
-                ExpectedProbability(AttackStage.FELT_DMG, 5, 0.01349572230118509),
-                
-                # Models slain
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 0, 0.12236508717748674),
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 1, 0.29979449212130976),
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 2, 0.3147854245032073),
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 3, 0.18362324508497507),
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 4, 0.06426789895234573),
-                ExpectedProbability(AttackStage.MODELS_SLAIN, 5, 0.01349572230118509),
-            ]
-        )
-    ]
-
-    all_passed = True
-    for test in test_cases:
-        if not run_test_case(test):
-            all_passed = False
-    
-    if all_passed:
-        print("\nAll tests passed!")
-    else:
-        print("\nSome tests failed!")
-        exit(1)
-    
-    Distribution.PRUNE_FACTOR = prev_prune_factor
-
-def run_attack_benchmark(max_time: float = 3) -> None:
-    """Run increasingly large attack counts until simulation takes longer than max_time seconds"""
-    last_time = 0
-    attacks = 0
-
-    defender = Defender(
-        name="Test Defender",
-        profiles=[DefenderProfile(
-            name="Test Model",
-            models=20,
-            toughness=3,
-            armor_save=4,
-            invuln_save=None,
-            wounds=1,
-            feel_no_pain=5,
-            modifiers=[],
-            keywords=[],
-            is_leader=False
-        )]
-    )
-    results = None
-    while last_time < max_time:
-        attacks += 2
-        profile = AttackProfile(
-            name=f"Test Profile ({attacks} attacks)",
+def process_test_case(test_case: Dict[str, Any]) -> Dict[str, Any]:
+    """Process a single test case and return results"""
+    try:
+        # Create attack profile from test case
+        attack = test_case["attack"]
+        attack_profile = AttackProfile(
+            name="Test Profile",
             models=1,
             guns_per_model=1,
-            attacks=DiceFormula.constant(attacks),
-            ballistic_skill=4,
-            strength=3,
-            armor_pen=0,
-            damage=DiceFormula.constant(1),
-            modifiers=[RerollAllFails(AttackStage.HITS), ],
+            attacks=DiceFormula.from_dict(attack["attacks"]),
+            ballistic_skill=attack["ballistic_skill"],
+            strength=attack["strength"],
+            armor_pen=attack["armor_pen"],
+            damage=DiceFormula.from_dict(attack["damage"]),
+            modifiers=[],
             keywords=[]
         )
-        
-        results = simulate_attacks(profile, defender)
-        last_time = results.timing.total_time
-        print(f"Simulated {attacks} attacks in {last_time:.3f} seconds")
-    
-    print(f"\nReached {attacks} attacks before simulation took {last_time:.3f} seconds")
-    print(results)
 
-def detail_compare_distributions(dist1: Distribution[AttackSequence], dist2: Distribution[AttackSequence]) -> None:
-    for result, prob in dist1.probabilities.items():
-        matched = dist2.probabilities.get(result, None)
-        if matched is None:
-            print(f"No match for {result} with prob {float(prob):.3f}")
-        elif prob != matched:
-            print(f"{result}: dist1 {float(prob):.3f} vs dist2 {float(matched):.3f}")
-    print("\n\n----\n\n")
-    for result, prob in dist2.probabilities.items():
-        matched = dist1.probabilities.get(result, None)
-        if matched is None:
-            print(f"No match for {result}")
+        # Create defender from test case
+        defend = test_case["defender"]
+        defender = Defender(
+            name="Test Defender",
+            profiles=[DefenderProfile(
+                name="Test Model",
+                models=defend["models"],
+                toughness=defend["toughness"],
+                armor_save=defend["armor_save"],
+                invuln_save=defend["invuln_save"],
+                wounds=defend["wounds"],
+                feel_no_pain=defend["feel_no_pain"],
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            )]
+        )
 
-def compare():
-    basic_profile = AttackProfile(
-        name="Test Profile",
-        models=1,
-        guns_per_model=1,
-        attacks=DiceFormula.constant(3),
-        ballistic_skill=4,
-        strength=3,
-        armor_pen=0,
-        damage=DiceFormula.constant(2),
-        modifiers=[RerollAllFails(AttackStage.HITS), LethalHits(), DevastatingWounds()],
-        keywords=[]
-    )
+        # Run simulation
+        results = simulate_attacks(attack_profile, defender)
 
-    defender = Defender(
-        name="Test Defender",
-        profiles=[DefenderProfile(
-            name="Test Model",
-            models=20,
-            toughness=3,
-            armor_save=4,
-            invuln_save=None,
-            wounds=1,
-            feel_no_pain=5,
-            modifiers=[],
-            keywords=[],
-            is_leader=False
-        )]
-    )
+        # Convert results to probabilities dict
+        probabilities = {
+            "HITS": {str(k.get_value(AttackStage.HITS)): float(v) 
+                    for k, v in results.collapsed_hits.probabilities.items()},
+            "WOUNDS": {str(k.get_value(AttackStage.WOUNDS)): float(v) 
+                      for k, v in results.collapsed_wounds.probabilities.items()},
+            "FAILED_SAVES": {str(k.get_value(AttackStage.FAILED_SAVES)): float(v) 
+                           for k, v in results.collapsed_failed_saves.probabilities.items()},
+            "DAMAGE": {str(k.get_value(AttackStage.DAMAGE)): float(v) 
+                      for k, v in results.collapsed_damage.probabilities.items()},
+            "MODELS_SLAIN": {str(k.get_value(AttackStage.MODELS_SLAIN)): float(v) 
+                           for k, v in results.collapsed_slain_models.probabilities.items()}
+        }
 
-    print("Running with batch saves")
-    results_with_batch_saves = simulate_attacks(basic_profile, defender)
-    print("\n\n\n---\n\n\nRunning without batch saves")
-    batch_save_roll.value = False
-    results_without_batch_saves = simulate_attacks(basic_profile, defender)
+        return {
+            "success": True,
+            "probabilities": probabilities,
+            "timing": asdict(results.timing)
+        }
 
-    print("Compare damage")
-    detail_compare_distributions(results_with_batch_saves.damage, results_without_batch_saves.damage)
-    print("\n\n----\n\n")
-    print("Batch Damage dist")
-    print(results_with_batch_saves.damage)
-    print("Non-batch Damage dist")
-    print(results_without_batch_saves.damage)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
-    dist1 = results_with_batch_saves.collapsed_failed_saves
-    dist2 = results_without_batch_saves.collapsed_failed_saves
-    print("Compare collapsed")
-    detail_compare_distributions(dist1, dist2)
-    print("\n\n----\n\n")
-    print("Batch failed saves dist")
-    print(dist1)
-    print("Non-batch failed saves dist")
-    print(dist2)
+def run_calculator() -> None:
+    """Run as a calculator process reading from stdin and writing to stdout"""
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                break
 
-   
+            test_case = json.loads(line)
+            result = process_test_case(test_case)
+            json.dump(result, sys.stdout)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+
+        except Exception as e:
+            json.dump({
+                "success": False,
+                "error": f"Calculator error: {str(e)}"
+            }, sys.stdout)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
 
 if __name__ == "__main__":
-    run_test_suite()
-    run_attack_benchmark()
+    run_calculator()

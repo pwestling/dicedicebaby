@@ -6,6 +6,7 @@ from itertools import product
 from functools import partial, wraps
 import random
 
+
 T = TypeVar('T')
 U = TypeVar('U')
 K = TypeVar('K')
@@ -16,6 +17,7 @@ R = TypeVar('R')  # Return type
 F = TypeVar('F', bound=Callable[..., Any])  # Function type
 
 repeat_cache: Dict[Tuple['Distribution', int], 'Distribution'] = {}
+
 
 class Sortable(Protocol):
     def __lt__(self: Any, other: Any) -> bool: ...

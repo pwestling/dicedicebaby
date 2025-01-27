@@ -1,19 +1,20 @@
 from dataclasses import dataclass
-from typing import Union, List
+from typing import Union, List, Dict
 from .distribution import Distribution, d6, d3
 
 @dataclass(frozen=True)
 class DiceFormula:
-    num_dice: int
-    sides: int
-    modifier: int = 0
+    dice: int  # Number of dice
+    sides: int  # Number of sides per die
+    modifier: int  # Fixed modifier to add
 
-    @classmethod
-    def constant(cls, value: int) -> "DiceFormula":
-        return cls(0, 0, value)
-    
+    @staticmethod
+    def constant(value: int) -> 'DiceFormula':
+        """Create a formula for a constant value"""
+        return DiceFormula(0, 1, value)
+
     def __str__(self) -> str:
-        base = f"{self.num_dice if self.num_dice > 1 else ''}D{self.sides}"
+        base = f"{self.dice if self.dice > 1 else ''}D{self.sides}"
         if self.modifier > 0:
             return f"{base}+{self.modifier}"
         elif self.modifier < 0:
@@ -21,20 +22,17 @@ class DiceFormula:
         return base
     
     def roll(self) -> Distribution[int]:
-        # Start with single die distribution
-        if self.sides == 6:
-            base_dist = d6
-        elif self.sides == 3:
-            base_dist = d3
-        elif self.sides == 1:
-            base_dist = Distribution.singleton(self.modifier)
-        else:
-            base_dist = Distribution.uniform(list(range(1, self.sides + 1)))
-            
-        # Combine dice
-        result = Distribution.singleton(0)
-        for _ in range(self.num_dice):
-            result = result.combine(base_dist, lambda x, y: x + y)
+        """Roll the dice and return a distribution of results"""
+        if self.dice == 0:
+            return Distribution.singleton(self.modifier)
+        
+        # Roll one die
+        single_die = Distribution.uniform(list(range(1, self.sides + 1)))
+        
+        # Combine multiple dice
+        result = single_die
+        for _ in range(self.dice - 1):
+            result = result.bind(lambda x: single_die.map(lambda y: x + y))
             
         # Add modifier
         if self.modifier != 0:
@@ -42,7 +40,28 @@ class DiceFormula:
             
         return result
 
+    def is_variable(self) -> bool:
+        """Return True if this formula involves dice rolls"""
+        return self.dice > 0
+
+    def to_dict(self) -> Dict[str, int]:
+        """Convert to JSON-serializable dictionary"""
+        return {
+            "dice": self.dice,
+            "sides": self.sides,
+            "modifier": self.modifier
+        }
+
+    @staticmethod
+    def from_dict(data: Dict[str, int]) -> 'DiceFormula':
+        """Create from JSON-serializable dictionary"""
+        return DiceFormula(
+            dice=data["dice"],
+            sides=data["sides"],
+            modifier=data["modifier"]
+        )
+
 # Common formulas
-D6 = DiceFormula(1, 6)
-D3 = DiceFormula(1, 3)
-TWO_D6 = DiceFormula(2, 6) 
+D6 = DiceFormula(1, 6, 0)
+D3 = DiceFormula(1, 3, 0)
+TWO_D6 = DiceFormula(2, 6, 0) 

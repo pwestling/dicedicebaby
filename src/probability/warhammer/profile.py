@@ -52,7 +52,7 @@ class AttackStage(Enum):
         return self.value < other.value
 
     def __hash__(self) -> int:
-        return hash(self.value)
+        return self.value
 
 class Modifier(Protocol):
     def modify_attacker(self, profile: 'AttackProfile', defender: 'Defender') -> 'AttackProfile':
@@ -123,6 +123,16 @@ class Defender:
                 return True
         return False
 
+    def has_any_fnp(self) -> bool:
+        return any(p.feel_no_pain is not None for p in self.profiles)
+
+    def multiple_wound_profiles(self) -> bool:
+        first_wound_profile = self.profiles[0].wounds
+        for profile in self.profiles[1:]:
+            if profile.wounds != first_wound_profile:
+                return True
+        return False
+
     def get_highest_toughness(self) -> int:
         """Get the highest toughness in the unit, prioritizing non-leader models."""
         non_leader_toughness = [p.toughness for p in self.profiles if not p.is_leader]
@@ -177,9 +187,11 @@ class ModelState:
 class AttackSequence:
     values: Dict[AttackStage, int]
     frozen: Dict[AttackStage, int] = field(default_factory=dict)
-    # Add fields to track current model and unit state
-    current_model: Optional[ModelState] = None
-    remaining_models: Dict[DefenderProfile, int] = field(default_factory=dict)
+    hash_val: int = 0
+
+    def __post_init__(self):
+        object.__setattr__(self, 'hash_val', self.do_hash())
+
 
     @classmethod
     def create(cls, value: int, stage: AttackStage) -> 'AttackSequence':
@@ -254,21 +266,24 @@ class AttackSequence:
         # Combine all values from both sequences
         new_values = {}
         new_frozen = {}
-        for stage, value in set(self.values.items()) | set(other.values.items()):
+        for stage in set(self.values.keys()) | set(other.values.keys()):
             new_values[stage] = self.get_value(stage) + other.get_value(stage)
         
             
-        for stage, value in set(self.frozen.items()) | set(other.frozen.items()):
+        for stage in set(self.frozen.keys()) | set(other.frozen.keys()):
             new_frozen[stage] = self.get_frozen(stage) + other.get_frozen(stage)
             
 
         return AttackSequence(values=new_values, frozen=new_frozen)
 
-    def __hash__(self) -> int:
+    def do_hash(self) -> int:
         # Convert dict to tuple of tuples for hashing
         items = tuple(sorted((stage, value) for stage, value in self.values.items() if value != 0))
         frozen_items = tuple(sorted((stage, value) for stage, value in self.frozen.items() if value != 0))
         return hash(items + frozen_items)
+    
+    def __hash__(self) -> int:
+        return self.hash_val    
         
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, AttackSequence):

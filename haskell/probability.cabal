@@ -1,0 +1,43 @@
+name:                probability
+version:             0.1.0.0
+synopsis:            Probability calculations for Warhammer 40k
+description:         A probability calculator for Warhammer 40k combat
+license:             BSD3
+author:              Author Name
+maintainer:          email@example.com
+build-type:          Simple
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Probability.Distribution
+                    , Probability.Warhammer.Profile
+                    -- , Probability.Dice
+                    -- , Probability.Warhammer.Attack
+  build-depends:       base >= 4.7 && < 5
+                    , containers
+                    , aeson
+                    , text
+                    , hashable
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable probability-calc
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  build-depends:       base
+                    , probability
+                    , aeson
+                    , bytestring
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+test-suite probability-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:            Spec.hs
+  build-depends:       base
+                    , probability
+                    , hspec
+  default-language:    Haskell2010
+  ghc-options:         -Wall 
