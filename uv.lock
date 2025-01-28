@@ -85,10 +85,12 @@ name = "dicedicebaby"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "dill" },
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "python-multipart" },
     { name = "sortedcontainers" },
+    { name = "stackless" },
     { name = "uvicorn" },
 ]
 
@@ -107,17 +109,28 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "dill", specifier = ">=0.3.9" },
     { name = "fastapi", specifier = ">=0.109.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = ">=2.4.0" },
+    { name = "stackless", specifier = ">=0.0.1" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pyright", specifier = ">=1.1.392.post0" }]
+
+[[package]]
+name = "dill"
+version = "0.3.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/43/86fe3f9e130c4137b0f1b50784dd70a5087b911fe07fa81e53e0c4c47fea/dill-0.3.9.tar.gz", hash = "sha256:81aa267dddf68cbfe8029c42ca9ec6a4ab3b22371d1c450abc54422577b4512c", size = 187000 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/d1/e73b6ad76f0b1fb7f23c35c6d95dbc506a9c8804f43dda8cb5b0fa6331fd/dill-0.3.9-py3-none-any.whl", hash = "sha256:468dff3b89520b474c0397703366b7b95eebe6303f108adf9b19da1f702be87a", size = 119418 },
+]
 
 [[package]]
 name = "exceptiongroup"
@@ -462,6 +475,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575 },
+]
+
+[[package]]
+name = "stackless"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/59/17a83dab4d5898b76640f3870df04904beeedfa6731e10fb6a074f3234d3/stackless-0.0.1.tar.gz", hash = "sha256:a9cba266cbb307bf81e0587992ad72c342b5c33c1881b0dc3173bb7444c9f970", size = 901 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/95/d32cf3de9495ef76dcdfa22cb633bcaae39a847605ad8e6d670bb552b97e/stackless-0.0.1-py3-none-any.whl", hash = "sha256:ee60a5a10b2fcded2b359e00e8c3a357d5014fa92c06a64ba7636a0f46781a9b", size = 1263 },
 ]
 
 [[package]]

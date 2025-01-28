@@ -7,6 +7,7 @@ import json
 import sys
 import math
 
+
 @dataclass
 class ExpectedProbability:
     stage: AttackStage
@@ -212,7 +213,7 @@ test_cases = [
 
 slow_test_cases = [
     TestCase(
-        name="10 attacks damage 5 vs 3 wounds",
+        name="60 attacks damage 1d3 vs 3 wounds SUPER SLOW",
         attack_profile=AttackProfile(
             name="Test Profile",
             models=1,
@@ -277,12 +278,15 @@ def run_test_case(test: TestCase) -> bool:
         if abs(actual - exp.probability) > exp.tolerance:
             print(f"Failed: {exp.stage.name}={exp.value} expected {exp.probability:.4f} but got {actual:.4f}")
             all_passed = False
+    if all_passed:
+        print(f"Passed: {test.name} in {results.timing.total_time:.3f} seconds")
+    else:
+        print(f"Failed: {test.name} with results: \n{results}")
     return all_passed
 
 def run_test_suite() -> None:
-    prev_prune_factor = Distribution.PRUNE_FACTOR
     all_passed = True
-    for test in test_cases:
+    for test in test_cases + slow_test_cases:
         if not run_test_case(test):
             all_passed = False
     
@@ -292,7 +296,6 @@ def run_test_suite() -> None:
         print("\nSome tests failed!")
         exit(1)
     
-    Distribution.PRUNE_FACTOR = prev_prune_factor
 
 def run_attack_benchmark2() -> None:
     """Run increasingly large attack counts until simulation takes longer than max_time seconds"""
@@ -407,4 +410,4 @@ class TestRunner:
 
 
 if __name__ == "__main__":
-    TestRunner.run_tests_standalone() 
+    run_test_suite()

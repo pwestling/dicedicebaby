@@ -5,6 +5,10 @@ from multiprocessing import Pool
 from itertools import product
 from functools import partial, wraps
 import random
+import os
+import multiprocessing.pool
+import dill
+import sys
 
 
 T = TypeVar('T')
@@ -18,6 +22,18 @@ F = TypeVar('F', bound=Callable[..., Any])  # Function type
 
 repeat_cache: Dict[Tuple['Distribution', int], 'Distribution'] = {}
 
+PARALLEL_THRESHOLD = 10000  # Threshold for parallel processing
+CHUNK_SIZE = 1000  # Size of chunks for parallel processing
+NUM_PROCESSES = os.cpu_count() or 1  # Number of CPU cores to use
+
+class ExceptionWrapper(object):
+
+    def __init__(self, ee):
+        self.ee = ee
+        __, __, self.tb = sys.exc_info()
+
+    def re_raise(self):
+        raise self.ee.with_traceback(self.tb)
 
 class Sortable(Protocol):
     def __lt__(self: Any, other: Any) -> bool: ...
@@ -121,12 +137,36 @@ class Distribution(Generic[T]):
 
 
     def combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
+        # If distributions are large enough, use parallel processing
+        # if len(self.probabilities) * len(other.probabilities) > PARALLEL_THRESHOLD:
+        #     return self._parallel_combine(other, f)
+        return self._sequential_combine(other, f)
+
+    def _sequential_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
         result: Dict[U, Fraction] = {}
         for (x, p1) in self.probabilities.items():
             for (y, p2) in other.probabilities.items():
                 z = f(x, y)
                 result[z] = result.get(z, Fraction(0)) + p1 * p2
         return Distribution(result)
+
+    def _parallel_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
+        items1 = list(self.probabilities.items())
+        chunks = [items1[i:i + CHUNK_SIZE] for i in range(0, len(items1), CHUNK_SIZE)]
+        
+        with DillPool(NUM_PROCESSES) as pool:
+            process_chunk = partial(_process_chunk_combine, 
+                                   other_probs=other.probabilities,
+                                   f=f)
+            results = pool.map(process_chunk, chunks)
+        
+        # Merge all partial results
+        final_result: Dict[U, Fraction] = {}
+        for partial_result in results:
+            for k, v in partial_result.items():
+                final_result[k] = final_result.get(k, Fraction(0)) + v
+        
+        return Distribution(final_result)
 
     def merge(self, other: 'Distribution[T]') -> 'Distribution[T]':
         result: Dict[T, Fraction] = {}
@@ -160,12 +200,14 @@ class Distribution(Generic[T]):
         return result
         
     def bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
+        # If distribution is large enough, use parallel processing
+        # if len(self.probabilities) > PARALLEL_THRESHOLD:
+        #     return self._parallel_bind(f)
+        return self._sequential_bind(f)
+
+    def _sequential_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
         """Monadic bind (>>=) for distributions.
-        Maps each value to a new distribution and combines the results.
-        
-        Args:
-            f: Function that maps a value to a new distribution
-        """
+        Maps each value to a new distribution and combines the results."""
         result: Dict[U, Fraction] = {}
         for x, p1 in self.probabilities.items():
             # Get new distribution from f
@@ -173,8 +215,25 @@ class Distribution(Generic[T]):
             # Scale its probabilities by p1 and merge into result
             for y, p2 in dist.probabilities.items():
                 result[y] = result.get(y, Fraction(0)) + p1 * p2
-        # eliminate any keys with effectively zero probability
         return Distribution(result)
+
+    def _parallel_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
+        items = list(self.probabilities.items())
+        chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
+        
+        with DillPool(NUM_PROCESSES) as pool:
+            results = pool.map(partial(_process_chunk_bind, f=f), chunks)
+        
+        # Merge all partial results
+        final_result: Dict[U, Fraction] = {}
+        for partial_result in results:
+            if isinstance(partial_result, ExceptionWrapper):
+                partial_result.re_raise()
+            else:
+                for k, v in partial_result.items():
+                    final_result[k] = final_result.get(k, Fraction(0)) + v
+        
+        return Distribution(final_result)
 
     def bind_on_match(self, key: T, f: Callable[[T], 'Distribution[T]']) -> 'Distribution[T]':
         
@@ -236,6 +295,51 @@ def liftM(f: Callable[[T], 'Distribution[U]']) -> Callable[['Distribution[T]'], 
     def lifted(dist: Distribution[T]) -> Distribution[U]:
         return dist.bind(f)
     return lifted
+
+
+def _process_chunk_combine(chunk: List[Tuple[T, Fraction]], 
+                          other_probs: Dict[J, Fraction],
+                          f: Callable[[T, J], U]) -> Dict[U, Fraction]:
+    partial_result: Dict[U, Fraction] = {}
+    for (x, p1) in chunk:
+        for (y, p2) in other_probs.items():
+            z = f(x, y)
+            partial_result[z] = partial_result.get(z, Fraction(0)) + p1 * p2
+    return partial_result
+
+def _process_chunk_bind(chunk: List[Tuple[T, Fraction]], 
+                       f: Callable[[T], 'Distribution[U]'],) -> Dict[U, Fraction] | ExceptionWrapper:
+    try:
+        partial_result: Dict[U, Fraction] = {}
+        for x, p1 in chunk:
+            dist = f(x)
+            for y, p2 in dist.probabilities.items():
+                partial_result[y] = partial_result.get(y, Fraction(0)) + p1 * p2
+        return partial_result
+    except Exception as e:
+        import traceback
+        print(f"Error in chunk processing: {str(e)}\n{traceback.format_exc()}", file=sys.stderr)
+        return ExceptionWrapper(e)
+
+
+# Create a Pool subclass that uses dill for serialization
+class DillPool(multiprocessing.pool.Pool):
+    def __init__(self, *args, **kwargs):
+        kwargs['context'] = multiprocessing.get_context()
+        super().__init__(*args, **kwargs)
+        self._ctx = kwargs['context']
+
+    def _setup_queues(self):
+        self._inqueue = self._ctx.Queue()
+        self._outqueue = self._ctx.Queue()
+        self._quick_put = self._inqueue._writer.send # type: ignore
+        self._quick_get = self._outqueue._reader.recv # type: ignore
+
+    def _Popen(self, process_obj):
+        return self._ctx.Process(
+            target=process_obj.run,
+            args=(self._inqueue, self._outqueue, dill.dumps, dill.loads)
+        )
 
 
 if __name__ == "__main__":
