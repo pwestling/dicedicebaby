@@ -4,6 +4,7 @@ import sys
 import json
 from pathlib import Path
 from typing import IO
+from time import perf_counter
 
 def run_tests(calculator_cmd: str) -> None:
     """
@@ -57,10 +58,16 @@ def run_tests(calculator_cmd: str) -> None:
         calc_stdin.write(test_case) 
         calc_stdin.flush() 
 
+        start_time = perf_counter()
+
         print("Waiting for result")
         
         # Get result from calculator
         result: str = calc_stdout.readline() 
+        
+        end_time = perf_counter()
+        print(f"Time taken for test {index}: {end_time - start_time} s")
+
         
         # Send back to test process
         test_stdin.write(result) 

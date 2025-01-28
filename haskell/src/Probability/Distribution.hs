@@ -30,12 +30,16 @@ import GHC.Generics (Generic)
 import Control.Monad (join, ap)
 import Data.Aeson
 import Data.List (intercalate)
+import Probability.MemoUgly (memo)
+import Data.Function (on)
+import Control.DeepSeq (NFData, force)
+import Control.Exception (evaluate)
 
-import Debug.Trace (trace, traceShow, traceShowId)
+-- import Debug.Trace (trace, traceShow, traceShowId)
 
-labelTraceId :: (Show a) => String -> a -> a
+-- labelTraceId :: (Show a) => String -> a -> a
 -- labelTraceId label x = trace (label <> ": " <> show x) x
-labelTraceId label x = x
+-- labelTraceId label x = x
 
 
 -- | Core Distribution type representing a probability distribution over values
@@ -48,8 +52,6 @@ instance ToJSONKey a => ToJSON (Distribution a) where
 instance (FromJSONKey a, Ord a) => FromJSON (Distribution a) where
     parseJSON = fmap Distribution . parseJSON
 
-epsilon :: Rational
-epsilon = 1 % 100000000000000
 
 pruneFactor :: Rational
 pruneFactor = 1 % 100000
@@ -74,32 +76,35 @@ map :: (Ord a, Ord b) => (a -> b) -> Distribution a -> Distribution b
 map = distmap
 
 -- | Combine two distributions by applying the semigroup operation to their values
-combine :: (Ord a, Semigroup a, Show a) => Distribution a -> Distribution a -> Distribution a
-combine (Distribution p1) (Distribution p2) = Distribution $ Map.fromListWith (+)
-    [  (x <> y, p1' * p2')
+combineRaw :: (Ord a, Semigroup a, Show a, NFData a) => Distribution a -> Distribution a -> Distribution a
+combineRaw (Distribution p1) (Distribution p2) = Distribution $ Map.fromListWith (+)
+    [  force (x <> y, p1' * p2')
     | (x, p1') <- Map.toList p1
     , (y, p2') <- Map.toList p2
     ]
 
-repeated :: (Ord a, Semigroup a, Show a) => Distribution a -> Int -> Distribution a
+combine :: (Ord a, Semigroup a, Show a, NFData a) => Distribution a -> Distribution a -> Distribution a
+combine = memo combineRaw
+
+repeated :: (Ord a, Semigroup a, Show a, NFData a) => Distribution a -> Int -> Distribution a
 repeated d 0 = empty
 repeated d 1 = d
-repeated d n = labelTraceId ("repeated " ++ show n) $ combine d (repeated d (n - 1))
+repeated d n = combine d (repeated d (n - 1))
 
 -- | Bind operation for distributions
-bind :: Ord b => Distribution a -> (a -> Distribution b) -> Distribution b
+bind :: (Ord b, Show b, Show a, NFData b) => Distribution a -> (a -> Distribution b) -> Distribution b
 bind (Distribution ps) f = Distribution $ Map.fromListWith (+)
-    [ (y, p * q)
+    [ force (y, p * q)
     | (x, p) <- Map.toList ps
     , (y, q) <- Map.toList $ probabilities (f x)
     ]
 
 
-(>>==) :: Ord b => Distribution a -> (a -> Distribution b) -> Distribution b
+(>>==) :: (Ord b, Show b, Show a, NFData b) => Distribution a -> (a -> Distribution b) -> Distribution b
 (>>==) = bind
 infixl 1 >>==
 
-liftM :: (Ord a, Ord b) => (a -> Distribution b) -> Distribution a -> Distribution b
+liftM :: (Ord a, Ord b, Show b, Show a, NFData b) => (a -> Distribution b) -> Distribution a -> Distribution b
 liftM f d = bind d f
 -- | Merge two distributions by adding their probabilities
 merge :: Ord a => Distribution a -> Distribution a -> Distribution a
@@ -130,6 +135,9 @@ d6 = uniform [1..6]
 d3 :: Distribution Int
 d3 = uniform [1..3]
 
+instance Ord a => Ord (Distribution a) where
+    compare = compare `on` probabilities
+
 -- Helper instances
 instance Ord a => Semigroup (Distribution a) where
     (<>) = merge
@@ -151,5 +159,5 @@ instance Show a => Show (Distribution a) where
 instance Eq a => Eq (Distribution a) where
     (Distribution ps1) == (Distribution ps2) = ps1 == ps2
 
-
+instance (NFData a) => NFData (Distribution a) 
 

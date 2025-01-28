@@ -45,11 +45,13 @@ import Data.Aeson.Types (withObject, withText, (.:), (.=), object)
 import Data.Text (Text)
 import qualified Data.Text as T (pack)
 
-import Debug.Trace (trace, traceShow, traceShowId)
+import Probability.MemoUgly (memo)
 
-labelTraceId :: (Show a) => String -> a -> a
+-- import Debug.Trace (trace, traceShow, traceShowId, traceId)
+
+-- labelTraceId :: (Show a) => String -> a -> a
 -- labelTraceId label x = trace (label <> ": " <> show x) x
-labelTraceId label x = x
+-- labelTraceId label x = x
 -- | Get wound threshold based on strength vs toughness comparison
 getWoundThreshold :: Int -> Int -> Int
 getWoundThreshold strength toughness
@@ -254,7 +256,7 @@ checkProbability actual expected tolerance =
     then True
     else if actual == 0 || expected == 0
          then abs (actual - expected) < tolerance
-         else abs ((actual - expected) / expected) < tolerance
+         else abs ((actual - expected)) < tolerance
 
 stageProbs :: AttackStage -> Distribution AttackSequence -> Map.Map Int Double
 stageProbs stage dist = 
@@ -270,21 +272,25 @@ validateResult results ExpectedProbability{..} = do
     let stageResults = case stage of
             Hits -> results.hits.probabilities
             Wounds -> results.wounds.probabilities
-            FailedSaves -> results.damage.probabilities
+            FailedSaves -> results.failedSaves.probabilities
             Damage -> results.damage.probabilities
-            ModelsSlain -> results.damage.probabilities
+            FeltDmg -> results.feltDamage.probabilities
+            ModelsSlain -> results.modelsSlain.probabilities
             _ -> Map.empty
-    let actualProb = Map.findWithDefault 0 (createSequence stage value) stageResults
+    let actualProb = Map.findWithDefault 0 (createSequence stage value) ( stageResults)
     unless (checkProbability (fromRational actualProb) probability tolerance) $
         Left $ "Probability mismatch for " <> T.pack (show stage) <> 
               " value " <> T.pack (show value) <> 
               ": expected " <> T.pack (show probability) <> 
               " (±" <> T.pack (show tolerance) <> 
-              "), got " <> T.pack (show actualProb)
+              "), got " <> T.pack (show (fromRational actualProb))
 
 
 unwrapDieResult :: Distribution DieResult -> Distribution AttackSequence
 unwrapDieResult dist = D.map (\(DieResult v seq _) ->  seq) dist
+
+
+
 
 -- | Perform rolls for a given stage
 performRolls :: AttackStage 
@@ -297,8 +303,9 @@ performRolls stage dieRoll state =
        then D.singleton state
        else let unwrapped = unwrapDieResult dieRoll
                 combined = D.repeated unwrapped quant 
-                pruned = labelTraceId "performRolls" $ D.prune combined
-            in D.map (<> freezeAll stage state) pruned
+                pruned = D.prune combined
+                withFrozen = (freezeAll stage state)
+            in D.map (<> withFrozen) pruned
 
 -- | Helper to bind performRolls
 performRollsBind :: AttackStage 
@@ -338,7 +345,7 @@ rollToHit attackDist profile defender mods = do
             if x >= threshold
                 then D.singleton $ DieResult x (createSequence Hits 1) (Just True)
                 else D.singleton $ DieResult x (createSequence Hits 0) (Just False)
-        modifiedRoll = traceShowId $ applyModifiers (singleHitRoll) Hits profile defender mods
+        modifiedRoll = applyModifiers (singleHitRoll) Hits profile defender mods
     attackDist D.>>== performRollsBind Attacks modifiedRoll
 
 -- | Roll to wound
@@ -394,11 +401,12 @@ saveRoll defender profile mods state = do
 
 -- | Check if batch damage is allowed
 batchDamageAllowed :: Defender -> AttackProfile -> Bool
-batchDamageAllowed defender profile = 
-    not (hasAnyFnp defender) &&
-    not (Dice.isVariable profile.damage) &&
-    not (multipleWoundProfiles defender) &&
-    (.batchDamageRoll) defaultConfig
+-- batchDamageAllowed defender profile = 
+--     not (hasAnyFnp defender) &&
+--     not (Dice.isVariable profile.damage) &&
+--     not (multipleWoundProfiles defender) &&
+--     (.batchDamageRoll) defaultConfig
+batchDamageAllowed _ _ = False
 
 -- | Roll for damage
 damageRoll :: Defender 
@@ -488,11 +496,11 @@ doDmgSequence woundDist defender profile mods _ = do
         slayModels' = slayModels defender profile mods
 
         go current = do
-            let saved = saveRoll' current 
-                damaged = damageRoll' saved
-                feltDmg = fnpRoll' damaged
-                slain = D.map slayModels' feltDmg
-                next = slain
+            let saved = (saveRoll' current) 
+                damaged = (damageRoll' saved)
+                feltDmg = (fnpRoll' damaged)
+                slain = (D.map slayModels' feltDmg)
+                next = (slain)
                        
             if next == current
                 then current
@@ -512,16 +520,16 @@ simulateAttacks profile defender mods =
         defender' = foldr (\(ModifierBox m) d -> modifyDefender m profile d) defender allMods
 
         -- Initial attack rolls
-        attackDist = rollForAttacks profile' mods
+        attackDist = rollForAttacks profile' mods & D.prune
         attackDist' = D.prune attackDist
 
         -- Hit rolls
-        hitDist = rollToHit attackDist' profile' defender' ( mods)
-        hitDist' = D.map clearFrozen hitDist & D.prune
+        hitDist = rollToHit attackDist' profile' defender' ( mods) & D.prune
+        hitDist' = D.map clearFrozen hitDist 
 
         -- Wound rolls
-        woundDist = rollToWound hitDist' profile' defender' mods
-        woundDist' = D.map clearFrozen woundDist & D.prune
+        woundDist = rollToWound hitDist' profile' defender' mods & D.prune
+        woundDist' = D.map clearFrozen woundDist 
 
         -- Initialize timing info
         timing = TimingInfo 0 0 0 0 0 0 0 0

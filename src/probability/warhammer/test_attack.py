@@ -12,7 +12,7 @@ class ExpectedProbability:
     stage: AttackStage
     value: int
     probability: float
-    tolerance: float = 0.01
+    tolerance: float = 0.00001
 
 @dataclass
 class TestCase:
@@ -210,6 +210,52 @@ test_cases = [
     )
 ]
 
+slow_test_cases = [
+    TestCase(
+        name="10 attacks damage 5 vs 3 wounds",
+        attack_profile=AttackProfile(
+            name="Test Profile",
+            models=1,
+            guns_per_model=1,
+            attacks=DiceFormula.constant(60),
+            ballistic_skill=4,
+            strength=4,
+            armor_pen=-1,
+            damage=DiceFormula(1, 3, 1),
+            modifiers=[RerollAllFails(AttackStage.HITS), RerollAllFails(AttackStage.WOUNDS), LethalHits(), DevastatingWounds()],
+            keywords=[]
+        ),
+        defender=Defender(
+            name="Test Defender",
+            profiles=[DefenderProfile(
+                name="Test Model",
+                models=100,
+                toughness=4,
+                armor_save=4,
+                invuln_save=None,
+                wounds=3,
+                feel_no_pain=4,
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            ),DefenderProfile(
+                name="Test Model",
+                models=4,
+                toughness=4,
+                armor_save=2,
+                invuln_save=3,
+                wounds=3,
+                feel_no_pain=5,
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            )]
+        ),
+        modifiers=[],
+        expected=[]
+    )
+]
+
 def run_test_case(test: TestCase) -> bool:
     print(f"\nRunning test: {test.name}")
     results = simulate_attacks(test.attack_profile, test.defender, test.modifiers)
@@ -335,9 +381,9 @@ class TestRunner:
     @staticmethod
     def run_tests_standalone() -> None:
         """Run tests by communicating via stdin/stdout"""
-        
+        test_cases.reverse()
         # Write test cases to stdout as JSON
-        for test in test_cases:
+        for test in test_cases + slow_test_cases:
             json.dump(TestRunner.serialize_test_case(test), sys.stdout)
             sys.stdout.write("\n")
             sys.stdout.flush()
@@ -351,7 +397,6 @@ class TestRunner:
             try:
                 result = json.loads(result_line)
 
-                print(f"Result: {result}", file=sys.stderr) 
                 if not result.get("success"):
                     print(f"Test {test.name} execution failed: {result.get('error')}", file=sys.stderr)
                     sys.exit(1)

@@ -222,12 +222,6 @@ def do_dmg_sequence(wound_dist: Distribution[AttackSequence], defender: Defender
     fnp_roll_fn = liftM(memoize(partial(fnp_roll, defender, profile, modifiers)))
     slay_models_fn = lift(memoize(partial(slay_models, defender, profile, modifiers)))
 
-    # if allow_batch_saves:
-    #     save_start = perf_counter()
-    #     wound_dist = roll_to_save(wound_dist, profile, defender, modifiers)
-    #     timing.save_roll_time = perf_counter() - save_start
-    #     save_roll_fn = lambda d: d
-
     current = wound_dist
     while True:
         save_start = perf_counter()
@@ -284,6 +278,7 @@ class TimingInfo:
     fnp_roll_time: float
     slay_models_time: float
     total_time: float
+    max_entries_achieved: int
 
     @property
     def breakdown(self) -> Dict[str, float]:
@@ -295,7 +290,8 @@ class TimingInfo:
             "damage": self.damage_roll_time,
             "fnp": self.fnp_roll_time,
             "slay_models": self.slay_models_time,
-            "total": self.total_time
+            "total": self.total_time,
+            "max_entries_achieved": self.max_entries_achieved
         }
 
     def __str__(self) -> str:
@@ -410,7 +406,8 @@ def simulate_attacks(
         damage_roll_time=0.0,
         fnp_roll_time=0.0,
         slay_models_time=0.0,
-        total_time=0.0
+        total_time=0.0,
+        max_entries_achieved=0
     )
     
     damage_start = perf_counter()
@@ -418,7 +415,8 @@ def simulate_attacks(
     
     total_time = perf_counter() - start_time
     timing.total_time = total_time
-    
+    timing.max_entries_achieved = Distribution.MAX_ENTRIES_ACHIEVED
+
     return AttackResults(
         attacks=attack_dist,
         hits=hit_dist,
@@ -479,6 +477,8 @@ def process_test_case(test_case: Dict[str, Any]) -> Dict[str, Any]:
             "MODELS_SLAIN": {str(k.get_value(AttackStage.MODELS_SLAIN)): float(v) 
                            for k, v in results.collapsed_slain_models.probabilities.items()}
         }
+
+        print(results, file=sys.stderr)
 
         return {
             "success": True,

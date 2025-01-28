@@ -19,17 +19,18 @@ import qualified Probability.Distribution as D
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
 import qualified Data.Set as Set
-import Data.List (intercalate)
+import Data.List (intercalate, sort, sortOn)
 import Data.Hashable (Hashable, hashWithSalt)
 import Probability.Dice as Dice
+import Control.DeepSeq (NFData, force)
 
 import Data.Aeson.Types (withObject, withText, (.:), (.=), object)
+import Probability.MemoUgly (memo)
 
-import Debug.Trace (trace, traceShow, traceShowId)
 
-llabelTraceId :: (Show a) => String -> a -> a
-llabelTraceId label x = trace (label <> ": " <> show x) x
--- labelTraceId label x = x
+-- llabelTraceId :: (Show a) => String -> a -> a
+-- llabelTraceId label x = trace (label <> ": " <> show x) x
+-- -- labelTraceId label x = x
 
 
 data AttackStage 
@@ -49,6 +50,7 @@ instance Hashable AttackStage
 instance ToJSONKey AttackStage
 instance FromJSONKey AttackStage
 
+instance NFData AttackStage
 instance ToJSON AttackStage where
     toJSON = String . \case
         Start -> "START"
@@ -77,7 +79,13 @@ instance FromJSON AttackStage where
 data AttackSequence = AttackSequence
     { values :: Map.Map AttackStage Int
     , frozen :: Map.Map AttackStage Int
-    } deriving (Eq, Generic)
+    } deriving (Generic)
+
+hashAttackSequence :: AttackSequence -> Int
+hashAttackSequence aseq = hashWithSalt 0 (sortedValues, sortedFrozen)
+      where
+        sortedValues = filter (\(_, v) -> v /= 0) $ sortOn fst $ Map.toList aseq.values
+        sortedFrozen = filter (\(_, v) -> v /= 0) $ sortOn fst $ Map.toList aseq.frozen
 
 instance ToJSON AttackSequence
 instance FromJSON AttackSequence
@@ -85,8 +93,21 @@ instance FromJSON AttackSequence
 instance ToJSONKey AttackSequence
 instance FromJSONKey AttackSequence
 
+instance Eq AttackSequence where
+    a1 == a2 = hashAttackSequence a1 == hashAttackSequence a2
+
+instance Hashable AttackSequence where
+    hashWithSalt salt aseq = hashAttackSequence aseq
+
 instance Ord AttackSequence where
-    compare a1 a2 = compare (Map.toList $ (\a -> a.values) a1) (Map.toList $ (\a -> a.values) a2)
+    compare a1 a2 = 
+        let 
+            r v = Map.filter (/= 0) v
+            vals1 = Map.toList $ Map.unionWith (+) (r a1.values) (r a1.frozen)
+            vals2 = Map.toList $ Map.unionWith (+) (r a2.values) (r a2.frozen)
+        in compare vals1 vals2
+
+instance NFData AttackSequence
 
 -- Helper functions for AttackSequence
 getValue :: AttackStage -> AttackSequence -> Int
@@ -112,6 +133,8 @@ data DieResult = DieResult
 
 instance ToJSON DieResult
 instance FromJSON DieResult
+
+instance NFData DieResult
 
 data AttackProfile = AttackProfile
     { name :: Text
@@ -210,7 +233,7 @@ data RerollAllFails = RerollAllFails AttackStage
 instance Modifier RerollAllFails where
     modifyRoll (RerollAllFails stage) dist currentStage _ _
         | stage /= currentStage = dist
-        | otherwise = llabelTraceId "RerollAllFails" $ rerollFails dist
+        | otherwise = rerollFails dist
       where
         rerollFails d = d `D.bind` \result -> 
             if not ((.passesCheck) result == Just False)
@@ -259,7 +282,6 @@ createAttackSequence stage val = AttackSequence
     { values = Map.singleton stage val
     , frozen = Map.empty
     }
-
 -- Example profiles
 spaceMarine :: DefenderProfile
 spaceMarine = DefenderProfile
@@ -307,14 +329,15 @@ freezeAll :: AttackStage -> AttackSequence -> AttackSequence
 freezeAll stage seq = AttackSequence
     { values = Map.delete stage ((.values) seq)
     , frozen = Map.insert stage (getValue stage seq + getFrozen stage seq) ((.frozen) seq)
-    }
+    } 
 
 -- | Freeze one value at a stage
 freezeOne :: AttackStage -> AttackSequence -> AttackSequence
 freezeOne stage seq = AttackSequence
-    { values = Map.adjust (subtract 1) stage ((.values) seq)
-    , frozen = Map.insertWith (+) stage 1 ((.frozen) seq)
-    }
+    { values = Map.adjust (subtract amount) stage ((.values) seq)
+    , frozen = Map.insertWith (+) stage amount ((.frozen) seq)
+    } where
+        amount = min 1 (getValue stage seq)
 
 -- | Add or update a value for a stage
 withValue :: AttackStage -> Int -> AttackSequence -> AttackSequence
@@ -349,9 +372,3 @@ instance Show AttackSequence where
             parts = map showStage (Set.toList allStages)
         in "[" ++ intercalate ", " parts ++ "]"
 
--- | Hash an attack sequence
-instance Hashable AttackSequence where
-    hashWithSalt salt AttackSequence{..} = 
-        let nonZeroValues = Map.filter (/= 0) values
-            nonZeroFrozen = Map.filter (/= 0) frozen
-        in hashWithSalt salt (Map.toList nonZeroValues, Map.toList nonZeroFrozen) 

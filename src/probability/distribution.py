@@ -34,9 +34,13 @@ class Distribution(Generic[T]):
 
     EPSILON : ClassVar[Fraction] = Fraction(1, 100000000000000)
     PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 100000)
+    MAX_ENTRIES_ACHIEVED : ClassVar[int] = 0
 
 
     probabilities: Dict[T, Fraction]
+
+    def __post_init__(self):
+        Distribution.MAX_ENTRIES_ACHIEVED = max(Distribution.MAX_ENTRIES_ACHIEVED, len(self.probabilities))
 
     def __str__(self) -> str:
         joiner = ",\n"
