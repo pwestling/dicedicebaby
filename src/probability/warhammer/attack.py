@@ -1,8 +1,8 @@
-from .profile import *
-from ..distribution import Distribution, d6, memoize, liftM, lift, Box
+from probability.warhammer.profile import *
+from probability.distribution import Distribution, d6, memoize, liftM, lift, Box
+from probability.dice import DiceFormula
 from typing import List, Optional, Callable, TypeVar, Union, Dict, Any
 from fractions import Fraction
-from ..dice import DiceFormula
 from functools import partial
 from dataclasses import dataclass, field, asdict
 from time import perf_counter
@@ -494,12 +494,14 @@ def process_test_case(test_case: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_calculator() -> None:
     """Run as a calculator process reading from stdin and writing to stdout"""
+    print("Calculator process started", file=sys.stderr)
     while True:
         try:
             line = sys.stdin.readline()
             if not line:
+                print("No input received", file=sys.stderr)
                 break
-
+            print("Running test case", file=sys.stderr)
             test_case = json.loads(line)
             result = process_test_case(test_case)
             json.dump(result, sys.stdout)

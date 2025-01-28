@@ -20,19 +20,21 @@ def run_tests(calculator_cmd: str) -> None:
         calculator_cmd.split(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=sys.stderr,
         text=True
     )
     
     print(f"Calculator process started with PID: {calc_process.pid}")
     
     print(f"Running test process")
+    # route process stderr to our own stderr
+
     # Run the test process
     test_process = subprocess.Popen(
         [sys.executable, str(Path(__file__).parent / "test_attack.py")],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=None,
+        stderr=sys.stderr,
         text=True
     )
 
@@ -54,6 +56,8 @@ def run_tests(calculator_cmd: str) -> None:
         # Send to calculator
         calc_stdin.write(test_case) 
         calc_stdin.flush() 
+
+        print("Waiting for result")
         
         # Get result from calculator
         result: str = calc_stdout.readline() 
