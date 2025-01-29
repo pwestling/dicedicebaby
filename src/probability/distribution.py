@@ -56,10 +56,10 @@ class Distribution(Generic[T]):
 
     EPSILON : ClassVar[Fraction] = Fraction(1, 10000)
     PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 100000)
-    PRUNE_THRESHOLD : ClassVar[int] = 10000
+    PRUNE_THRESHOLD : ClassVar[int] = 1000
 
 
-    probabilities: Dict[T, Fraction]
+    probabilities: Dict[T, float]
 
 
     def __str__(self) -> str:
@@ -79,7 +79,7 @@ class Distribution(Generic[T]):
     
     @classmethod
     def singleton(cls, x: T) -> 'Distribution[T]':
-        return cls({x: Fraction(1)})
+        return cls({x: 1.0})
 
     @classmethod
     def empty(cls) -> 'Distribution[T]':
@@ -88,12 +88,18 @@ class Distribution(Generic[T]):
     @classmethod
     def uniform(cls, xs: List[T]) -> 'Distribution[T]':
         n = len(xs)
-        return cls({x: Fraction(1, n) for x in xs})
+        return cls({x: 1.0 / n for x in xs})
     
     def get_singleton(self) -> T:
         if len(self.probabilities) != 1:
             raise ValueError("Distribution is not a singleton")
         return list(self.probabilities.keys())[0]
+
+    def copy(self) -> 'Distribution[T]':
+        result = {}
+        for k, v in self.probabilities.items():
+            result[k.copy()] = v # type: ignore
+        return Distribution(result)
 
     def map(self, f: Callable[[T], U]) -> 'Distribution[U]':
         """Apply a function to each value in the distribution."""
@@ -106,9 +112,14 @@ class Distribution(Generic[T]):
                 result[new_value] += prob
             else:
                 result[new_value] = prob
+        # if len(self.probabilities) > 100000:
+        #     print(self)
+        #     raise Exception("big map")
         return Distribution(result)
-
-    def map_probabilities(self, f: Callable[[Fraction], Fraction]) -> 'Distribution[T]':
+    
+    
+    
+    def map_probabilities(self, f: Callable[[float], float]) -> 'Distribution[T]':
         return Distribution({x: f(p) for x, p in self.probabilities.items()})
     
     def filter(self, pred: Callable[[T], bool], 
@@ -121,10 +132,10 @@ class Distribution(Generic[T]):
             if_true: Function to apply to values that satisfy the predicate
             if_false: Function to apply to values that don't satisfy the predicate
         """
-        result: Dict[U, Fraction] = {}
+        result: Dict[U, float] = {}
         for x, p in self.probabilities.items():
             y = if_true(x) if pred(x) else if_false(x)
-            result[y] = result.get(y, Fraction(0)) + p
+            result[y] = result.get(y, 0.0) + p
         return Distribution(result)
     
     def repeated(self, n: int) -> 'Distribution[T]':
@@ -161,11 +172,11 @@ class Distribution(Generic[T]):
         return self._sequential_combine(other, f).prune()
 
     def _sequential_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
-        result: Dict[U, Fraction] = {}
+        result: Dict[U, float] = {}
         for (x, p1) in self.probabilities.items():
             for (y, p2) in other.probabilities.items():
                 z = f(x, y)
-                result[z] = result.get(z, Fraction(0)) + p1 * p2
+                result[z] = result.get(z, 0.0) + p1 * p2
         return Distribution(result)
 
 
@@ -299,29 +310,29 @@ def liftM(f: Callable[[T], 'Distribution[U]']) -> Callable[['Distribution[T]'], 
     return lifted
 
 
-def _process_chunk_combine(chunk: List[Tuple[T, Fraction]], 
-                          other_probs: Dict[J, Fraction],
-                          f: Callable[[T, J], U]) -> Dict[U, Fraction]:
-    partial_result: Dict[U, Fraction] = {}
-    for (x, p1) in chunk:
-        for (y, p2) in other_probs.items():
-            z = f(x, y)
-            partial_result[z] = partial_result.get(z, Fraction(0)) + p1 * p2
-    return partial_result
+# def _process_chunk_combine(chunk: List[Tuple[T, Fraction]], 
+#                           other_probs: Dict[J, Fraction],
+#                           f: Callable[[T, J], U]) -> Dict[U, Fraction]:
+#     partial_result: Dict[U, Fraction] = {}
+#     for (x, p1) in chunk:
+#         for (y, p2) in other_probs.items():
+#             z = f(x, y)
+#             partial_result[z] = partial_result.get(z, Fraction(0)) + p1 * p2
+#     return partial_result
 
-def _process_chunk_bind(chunk: List[Tuple[T, Fraction]], 
-                       f: Callable[[T], 'Distribution[U]'],) -> Dict[U, Fraction] | ExceptionWrapper:
-    try:
-        partial_result: Dict[U, Fraction] = {}
-        for x, p1 in chunk:
-            dist = f(x)
-            for y, p2 in dist.probabilities.items():
-                partial_result[y] = partial_result.get(y, Fraction(0)) + p1 * p2
-        return partial_result
-    except Exception as e:
-        import traceback
-        print(f"Error in chunk processing: {str(e)}\n{traceback.format_exc()}", file=sys.stderr)
-        return ExceptionWrapper(e)
+# def _process_chunk_bind(chunk: List[Tuple[T, Fraction]], 
+#                        f: Callable[[T], 'Distribution[U]'],) -> Dict[U, Fraction] | ExceptionWrapper:
+#     try:
+#         partial_result: Dict[U, Fraction] = {}
+#         for x, p1 in chunk:
+#             dist = f(x)
+#             for y, p2 in dist.probabilities.items():
+#                 partial_result[y] = partial_result.get(y, Fraction(0)) + p1 * p2
+#         return partial_result
+#     except Exception as e:
+#         import traceback
+#         print(f"Error in chunk processing: {str(e)}\n{traceback.format_exc()}", file=sys.stderr)
+#         return ExceptionWrapper(e)
 
 
 

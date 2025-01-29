@@ -24,7 +24,7 @@ def get_wound_threshold(strength: int, toughness: int) -> int:
         return 6
     return 5
 
-def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], state: AttackSequence, max_rolls: int | None = None) -> Distribution[AttackSequence]:
+def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], state: AttackSequence, max_rolls: int | None = None, void_frozen: bool = False) -> Distribution[AttackSequence]:
     quant = state.get_value(quant_stage) if max_rolls is None else min(state.get_value(quant_stage), max_rolls)
     if quant == 0:
         return Distribution.singleton(state)
@@ -33,7 +33,8 @@ def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], s
     combined = monte_carlo_repeat(unwrapped, quant)
     combined = combined.prune()
  
-    result = combined.map(lambda x: x + state.freeze_quant(quant_stage, quant))
+    next_state = state.freeze_quant_mut(quant_stage, quant) if not void_frozen else state.void_quant_mut(quant_stage, quant)
+    result = combined.map(lambda x: x + next_state)
     return result
 
 def perform_rolls_bind(quant_stage: AttackStage, die_roll: Distribution[DieResult]) -> Callable[[AttackSequence], Distribution[AttackSequence]]:
@@ -152,7 +153,8 @@ def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifi
         rolls_in_batch = ((wounds_in_this_profile) // profile.damage.max_possible())
         rolls_in_batch = max(rolls_in_batch, 1) 
 
-    return perform_rolls(AttackStage.WOUNDS, save_roll, state, max_rolls=rolls_in_batch)
+    state = state.copy()
+    return perform_rolls(AttackStage.WOUNDS, save_roll, state, max_rolls=rolls_in_batch, void_frozen=True)
 
 def cleanly_divisible_wounds_batch_size(defender: Defender, possible_results: Distribution[DieResult], state: AttackSequence, output_stage: AttackStage) -> Tuple[int, Distribution[DieResult]] | None:
     current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
@@ -210,8 +212,7 @@ def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modi
             rolls_in_batch = defender_remaining_wounds // max_possible_damage
             rolls_in_batch = max(rolls_in_batch, 1)
     result = perform_rolls(target_stage, damage_rolls, state, max_rolls=rolls_in_batch)
-    return result.map(lambda x: x.with_value(AttackStage.PROCESSING_FAILED_SAVES, rolls_in_batch))
-    return result
+    return result.map(lambda x: x.with_value_mut(AttackStage.PROCESSING_FAILED_SAVES, rolls_in_batch))
 
 
 def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
@@ -224,8 +225,8 @@ def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifie
 
     if current_defender_profile.feel_no_pain is None:
         next_state = state \
-            .with_value(AttackStage.FELT_DMG, state.get_value(target_stage) + state.get_value(AttackStage.FELT_DMG)) \
-            .freeze_all(target_stage)
+            .with_value_mut(AttackStage.FELT_DMG, state.get_value(target_stage) + state.get_value(AttackStage.FELT_DMG)) \
+            .freeze_all_mut(target_stage)
         return Distribution.singleton(next_state)
     
     fnp = current_defender_profile.feel_no_pain
@@ -240,7 +241,7 @@ def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifie
 
     wound_cap = current_defender_profile.wounds
     def cap_dmg_felt(seq: AttackSequence) -> AttackSequence:
-        return seq.with_value(
+        return seq.with_value_mut(
             AttackStage.FELT_DMG,
             min(seq.get_value(AttackStage.FELT_DMG), wound_cap),
         )
@@ -255,16 +256,17 @@ def slay_models(defender: Defender, profile: AttackProfile, modifiers: List[Modi
     defender_wounds = current_defender_profile.wounds
     result : AttackSequence
     if state.get_value(AttackStage.FELT_DMG) >= defender_wounds:
+        starting_felt_dmg = state.get_value(AttackStage.FELT_DMG)
+        starting_models_slain = state.get_value(AttackStage.MODELS_SLAIN)
         num_slain : int = state.get_value(AttackStage.FELT_DMG) // defender_wounds
         allow_spill_over = state.get_value(AttackStage.PROCESSING_FAILED_SAVES) > 1
         num_slain = min(num_slain, state.get_value(AttackStage.PROCESSING_FAILED_SAVES))
         max_felt_dmg = min(num_slain * defender_wounds, state.get_value(AttackStage.FELT_DMG))
         result = state \
-            .with_value(AttackStage.MODELS_SLAIN, state.get_value(AttackStage.MODELS_SLAIN) + num_slain) \
-            .freeze_quant(AttackStage.FELT_DMG, max_felt_dmg) \
-            .with_value(AttackStage.FELT_DMG, 0 if not allow_spill_over else state.get_value(AttackStage.FELT_DMG) - max_felt_dmg) \
-            .freeze_all(AttackStage.PROCESSING_FAILED_SAVES)
-
+            .with_value_mut(AttackStage.MODELS_SLAIN, starting_models_slain + num_slain) \
+            .freeze_quant_mut(AttackStage.FELT_DMG, max_felt_dmg) \
+            .with_value_mut(AttackStage.FELT_DMG, 0 if not allow_spill_over else starting_felt_dmg - max_felt_dmg) \
+            .freeze_all_mut(AttackStage.PROCESSING_FAILED_SAVES)
     else:
         result = state
     return result
