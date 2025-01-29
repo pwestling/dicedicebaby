@@ -185,6 +185,13 @@ class Defender:
     
 
 class AttackSequence:
+    # Add this near the top of the class
+    FORCE_IMMUTABLE = True  # Class-level flag to control mutation behavior
+    
+    def _maybe_copy(self) -> 'AttackSequence':
+        """Return a copy if FORCE_IMMUTABLE is True, otherwise return self"""
+        return self.copy() if AttackSequence.FORCE_IMMUTABLE else self
+
     # Values for each stage
     start: int = 0
     attacks: int = 0
@@ -513,94 +520,96 @@ class AttackSequence:
 
     def with_value_mut(self, stage: AttackStage, value: int) -> 'AttackSequence':
         """Mutate a value for a stage in place and update hash"""
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.start = value
+                seq.start = value
             case AttackStage.ATTACKS:
-                self.attacks = value
+                seq.attacks = value
             case AttackStage.HITS:
-                self.hits = value
+                seq.hits = value
             case AttackStage.WOUNDS:
-                self.wounds = value
+                seq.wounds = value
             case AttackStage.MORTAL_WOUNDS:
-                self.mortal_wounds = value
+                seq.mortal_wounds = value
             case AttackStage.MORTAL_DAMAGE:
-                self.mortal_damage = value
+                seq.mortal_damage = value
             case AttackStage.FAILED_SAVES:
-                self.failed_saves = value
+                seq.failed_saves = value
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.processing_failed_saves = value
+                seq.processing_failed_saves = value
             case AttackStage.DAMAGE:
-                self.damage = value
+                seq.damage = value
             case AttackStage.FELT_DMG:
-                self.felt_dmg = value
+                seq.felt_dmg = value
             case AttackStage.MODELS_SLAIN:
-                self.models_slain = value
+                seq.models_slain = value
             case AttackStage.COMPLETE:
-                self.complete = value
+                seq.complete = value
 
-        # Update hash value since we modified the sequence
-        self.hash_val = 0
-        return self.validate_non_negative()
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def clear_frozen_mut(self) -> 'AttackSequence':
         """Clear all frozen values in place"""
-        self.frozen_start = 0
-        self.frozen_attacks = 0
-        self.frozen_hits = 0
-        self.frozen_wounds = 0
-        self.frozen_mortal_wounds = 0
-        self.frozen_mortal_damage = 0
-        self.frozen_failed_saves = 0
-        self.frozen_processing_failed_saves = 0
-        self.frozen_damage = 0
-        self.frozen_felt_dmg = 0
-        self.frozen_models_slain = 0
-        self.frozen_complete = 0
-        self.hash_val = 0
-        return self.validate_non_negative()
+        seq = self._maybe_copy()
+        seq.frozen_start = 0
+        seq.frozen_attacks = 0
+        seq.frozen_hits = 0
+        seq.frozen_wounds = 0
+        seq.frozen_mortal_wounds = 0
+        seq.frozen_mortal_damage = 0
+        seq.frozen_failed_saves = 0
+        seq.frozen_processing_failed_saves = 0
+        seq.frozen_damage = 0
+        seq.frozen_felt_dmg = 0
+        seq.frozen_models_slain = 0
+        seq.frozen_complete = 0
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def freeze_all_mut(self, stage: AttackStage) -> 'AttackSequence':
         """Freeze a value at a stage in place"""
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.frozen_start += self.start
-                self.start = 0
+                seq.frozen_start += seq.start
+                seq.start = 0
             case AttackStage.ATTACKS:
-                self.frozen_attacks += self.attacks
-                self.attacks = 0
+                seq.frozen_attacks += seq.attacks
+                seq.attacks = 0
             case AttackStage.HITS:
-                self.frozen_hits += self.hits
-                self.hits = 0
+                seq.frozen_hits += seq.hits
+                seq.hits = 0
             case AttackStage.WOUNDS:
-                self.frozen_wounds += self.wounds
-                self.wounds = 0
+                seq.frozen_wounds += seq.wounds
+                seq.wounds = 0
             case AttackStage.MORTAL_WOUNDS:
-                self.frozen_mortal_wounds += self.mortal_wounds
-                self.mortal_wounds = 0
+                seq.frozen_mortal_wounds += seq.mortal_wounds
+                seq.mortal_wounds = 0
             case AttackStage.MORTAL_DAMAGE:
-                self.frozen_mortal_damage += self.mortal_damage
-                self.mortal_damage = 0
+                seq.frozen_mortal_damage += seq.mortal_damage
+                seq.mortal_damage = 0
             case AttackStage.FAILED_SAVES:
-                self.frozen_failed_saves += self.failed_saves
-                self.failed_saves = 0
+                seq.frozen_failed_saves += seq.failed_saves
+                seq.failed_saves = 0
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.frozen_processing_failed_saves += self.processing_failed_saves
-                self.processing_failed_saves = 0
+                seq.frozen_processing_failed_saves += seq.processing_failed_saves
+                seq.processing_failed_saves = 0
             case AttackStage.DAMAGE:
-                self.frozen_damage += self.damage
-                self.damage = 0
+                seq.frozen_damage += seq.damage
+                seq.damage = 0
             case AttackStage.FELT_DMG:
-                self.frozen_felt_dmg += self.felt_dmg
-                self.felt_dmg = 0
+                seq.frozen_felt_dmg += seq.felt_dmg
+                seq.felt_dmg = 0
             case AttackStage.MODELS_SLAIN:
-                self.frozen_models_slain += self.models_slain
-                self.models_slain = 0
+                seq.frozen_models_slain += seq.models_slain
+                seq.models_slain = 0
             case AttackStage.COMPLETE:
-                self.frozen_complete += self.complete
-                self.complete = 0
-        self.hash_val = 0
-        return self.validate_non_negative()
+                seq.frozen_complete += seq.complete
+                seq.complete = 0
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def freeze_quant_mut(self, stage: AttackStage, quant: int) -> 'AttackSequence':
         """Freeze a quantity at a stage in place"""
@@ -608,45 +617,46 @@ class AttackSequence:
         if quant > current_val:
             raise ValueError(f"Cannot freeze more than the value at stage {stage}")
         
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.frozen_start += quant
-                self.start -= quant
+                seq.frozen_start += quant
+                seq.start -= quant
             case AttackStage.ATTACKS:
-                self.frozen_attacks += quant
-                self.attacks -= quant
+                seq.frozen_attacks += quant
+                seq.attacks -= quant
             case AttackStage.HITS:
-                self.frozen_hits += quant
-                self.hits -= quant
+                seq.frozen_hits += quant
+                seq.hits -= quant
             case AttackStage.WOUNDS:
-                self.frozen_wounds += quant
-                self.wounds -= quant
+                seq.frozen_wounds += quant
+                seq.wounds -= quant
             case AttackStage.MORTAL_WOUNDS:
-                self.frozen_mortal_wounds += quant
-                self.mortal_wounds -= quant
+                seq.frozen_mortal_wounds += quant
+                seq.mortal_wounds -= quant
             case AttackStage.MORTAL_DAMAGE:
-                self.frozen_mortal_damage += quant
-                self.mortal_damage -= quant
+                seq.frozen_mortal_damage += quant
+                seq.mortal_damage -= quant
             case AttackStage.FAILED_SAVES:
-                self.frozen_failed_saves += quant
-                self.failed_saves -= quant
+                seq.frozen_failed_saves += quant
+                seq.failed_saves -= quant
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.frozen_processing_failed_saves += quant
-                self.processing_failed_saves -= quant
+                seq.frozen_processing_failed_saves += quant
+                seq.processing_failed_saves -= quant
             case AttackStage.DAMAGE:
-                self.frozen_damage += quant
-                self.damage -= quant
+                seq.frozen_damage += quant
+                seq.damage -= quant
             case AttackStage.FELT_DMG:
-                self.frozen_felt_dmg += quant
-                self.felt_dmg -= quant
+                seq.frozen_felt_dmg += quant
+                seq.felt_dmg -= quant
             case AttackStage.MODELS_SLAIN:
-                self.frozen_models_slain += quant
-                self.models_slain -= quant
+                seq.frozen_models_slain += quant
+                seq.models_slain -= quant
             case AttackStage.COMPLETE:
-                self.frozen_complete += quant
-                self.complete -= quant
-        self.hash_val = 0
-        return self.validate_non_negative()
+                seq.frozen_complete += quant
+                seq.complete -= quant
+        seq.hash_val = 0
+        return seq.validate_non_negative()
     
     def void_quant_mut(self, stage: AttackStage, quant: int) -> 'AttackSequence':
         """Deduct and do not freeze a quantity at a stage in place"""
@@ -654,109 +664,113 @@ class AttackSequence:
         if quant > current_val:
             raise ValueError(f"Cannot void more than the value at stage {stage}")
         
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.start -= quant
+                seq.start -= quant
             case AttackStage.ATTACKS:
-                self.attacks -= quant
+                seq.attacks -= quant
             case AttackStage.HITS:
-                self.hits -= quant
+                seq.hits -= quant
             case AttackStage.WOUNDS:
-                self.wounds -= quant
+                seq.wounds -= quant
             case AttackStage.MORTAL_WOUNDS:
-                self.mortal_wounds -= quant
+                seq.mortal_wounds -= quant
             case AttackStage.MORTAL_DAMAGE:
-                self.mortal_damage -= quant
+                seq.mortal_damage -= quant
             case AttackStage.FAILED_SAVES:
-                self.failed_saves -= quant
+                seq.failed_saves -= quant
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.processing_failed_saves -= quant
+                seq.processing_failed_saves -= quant
             case AttackStage.DAMAGE:
-                self.damage -= quant
+                seq.damage -= quant
             case AttackStage.FELT_DMG:
-                self.felt_dmg -= quant
+                seq.felt_dmg -= quant
             case AttackStage.MODELS_SLAIN:
-                self.models_slain -= quant
+                seq.models_slain -= quant
             case AttackStage.COMPLETE:
-                self.complete -= quant
-        self.hash_val = 0
-        return self.validate_non_negative()
+                seq.complete -= quant
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def zero_out_mut(self, stage: AttackStage) -> 'AttackSequence':
         """Zero out a value at a stage in place"""
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.start = 0
-                self.frozen_start = 0
+                seq.start = 0
+                seq.frozen_start = 0
             case AttackStage.ATTACKS:
-                self.attacks = 0
-                self.frozen_attacks = 0
+                seq.attacks = 0
+                seq.frozen_attacks = 0
             case AttackStage.HITS:
-                self.hits = 0
-                self.frozen_hits = 0
+                seq.hits = 0
+                seq.frozen_hits = 0
             case AttackStage.WOUNDS:
-                self.wounds = 0
-                self.frozen_wounds = 0
+                seq.wounds = 0
+                seq.frozen_wounds = 0
             case AttackStage.MORTAL_WOUNDS:
-                self.mortal_wounds = 0
-                self.frozen_mortal_wounds = 0
+                seq.mortal_wounds = 0
+                seq.frozen_mortal_wounds = 0
             case AttackStage.MORTAL_DAMAGE:
-                self.mortal_damage = 0
-                self.frozen_mortal_damage = 0
+                seq.mortal_damage = 0
+                seq.frozen_mortal_damage = 0
             case AttackStage.FAILED_SAVES:
-                self.failed_saves = 0
-                self.frozen_failed_saves = 0
+                seq.failed_saves = 0
+                seq.frozen_failed_saves = 0
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.processing_failed_saves = 0
-                self.frozen_processing_failed_saves = 0
+                seq.processing_failed_saves = 0
+                seq.frozen_processing_failed_saves = 0
             case AttackStage.DAMAGE:
-                self.damage = 0
-                self.frozen_damage = 0
+                seq.damage = 0
+                seq.frozen_damage = 0
             case AttackStage.FELT_DMG:
-                self.felt_dmg = 0
-                self.frozen_felt_dmg = 0
+                seq.felt_dmg = 0
+                seq.frozen_felt_dmg = 0
             case AttackStage.MODELS_SLAIN:
-                self.models_slain = 0
-                self.frozen_models_slain = 0
+                seq.models_slain = 0
+                seq.frozen_models_slain = 0
             case AttackStage.COMPLETE:
-                self.complete = 0
-                self.frozen_complete = 0
-        self.hash_val = 0
-        return self.validate_non_negative()
+                seq.complete = 0
+                seq.frozen_complete = 0
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def zero_frozen_mut(self, stage: AttackStage) -> 'AttackSequence':
         """Zero out a frozen value at a stage in place"""
+        seq = self._maybe_copy()
         match stage:
             case AttackStage.START:
-                self.frozen_start = 0
+                seq.frozen_start = 0
             case AttackStage.ATTACKS:
-                self.frozen_attacks = 0
+                seq.frozen_attacks = 0
             case AttackStage.HITS:
-                self.frozen_hits = 0
+                seq.frozen_hits = 0
             case AttackStage.WOUNDS:
-                self.frozen_wounds = 0
+                seq.frozen_wounds = 0
             case AttackStage.MORTAL_WOUNDS:
-                self.frozen_mortal_wounds = 0
+                seq.frozen_mortal_wounds = 0
             case AttackStage.MORTAL_DAMAGE:
-                self.frozen_mortal_damage = 0
+                seq.frozen_mortal_damage = 0
             case AttackStage.FAILED_SAVES:
-                self.frozen_failed_saves = 0
+                seq.frozen_failed_saves = 0
             case AttackStage.PROCESSING_FAILED_SAVES:
-                self.frozen_processing_failed_saves = 0
+                seq.frozen_processing_failed_saves = 0
             case AttackStage.DAMAGE:
-                self.frozen_damage = 0
+                seq.frozen_damage = 0
             case AttackStage.FELT_DMG:
-                self.frozen_felt_dmg = 0
+                seq.frozen_felt_dmg = 0
             case AttackStage.MODELS_SLAIN:
-                self.frozen_models_slain = 0
+                seq.frozen_models_slain = 0
             case AttackStage.COMPLETE:
-                self.frozen_complete = 0
-        self.hash_val = 0
-        return self.validate_non_negative()
+                seq.frozen_complete = 0
+        seq.hash_val = 0
+        return seq.validate_non_negative()
 
     def freeze_one_mut(self, stage: AttackStage) -> 'AttackSequence':
         """Freeze one value at a stage in place"""
-        return self.freeze_quant_mut(stage, min(self.get_value(stage), 1)).validate_non_negative()
+        seq = self._maybe_copy()
+        return seq.freeze_quant_mut(stage, min(seq.get_value(stage), 1)).validate_non_negative()
 
     def copy(self) -> 'AttackSequence':
         return AttackSequence(
