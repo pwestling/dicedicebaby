@@ -56,9 +56,7 @@ class Distribution(Generic[T]):
 
     EPSILON : ClassVar[Fraction] = Fraction(1, 10000)
     PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 1000000)
-    MAX_ENTRIES_ACHIEVED : ClassVar[int] = 0
-    MAX_ENTRIES_ALLOWED : ClassVar[int] = 1000
-    PROBABILITY_TO_DISCARD : ClassVar[Fraction] = Fraction(1, 10000)
+    PRUNE_THRESHOLD : ClassVar[int] = 10000
 
 
     probabilities: Dict[T, Fraction]
@@ -79,19 +77,6 @@ class Distribution(Generic[T]):
             items = [f"{str(k)}:{float(v)}" for k, v in self.probabilities.items()]
             return f"Dist[{joiner.join(items)}]"
     
-    def limit_entries(self) -> 'Dict[T, Fraction]':
-        # keep only the top n most probable entries
-        sorted_items = sorted(self.probabilities.items(), key=lambda x: x[1], reverse=True)
-        limited_items = {}
-        total_prob = Fraction(0)
-        for x, p in sorted_items:
-            limited_items[x] = p
-            total_prob += p
-            if 1 - total_prob < Distribution.PROBABILITY_TO_DISCARD:
-                break
-        print(f"Discarding {len(sorted_items) - len(limited_items)} items out of {len(sorted_items)} with prob mass {float(1 - total_prob)}")
-        return {x: p / total_prob for x, p in limited_items.items()}
-
     @classmethod
     def singleton(cls, x: T) -> 'Distribution[T]':
         return cls({x: Fraction(1)})
@@ -111,10 +96,16 @@ class Distribution(Generic[T]):
         return list(self.probabilities.keys())[0]
 
     def map(self, f: Callable[[T], U]) -> 'Distribution[U]':
-        result: Dict[U, Fraction] = {}
-        for x, p in self.probabilities.items():
-            y = f(x)
-            result[y] = result.get(y, Fraction(0)) + p
+        """Apply a function to each value in the distribution."""
+        result = {}
+        # Use items() directly in a for loop instead of dict comprehension
+        for value, prob in self.probabilities.items():
+            new_value = f(value)
+            # Accumulate probabilities for same values
+            if new_value in result:
+                result[new_value] += prob
+            else:
+                result[new_value] = prob
         return Distribution(result)
 
     def map_probabilities(self, f: Callable[[Fraction], Fraction]) -> 'Distribution[T]':
@@ -199,15 +190,16 @@ class Distribution(Generic[T]):
 
 
     def merge(self, other: 'Distribution[T]') -> 'Distribution[T]':
-        result: Dict[T, Fraction] = {}
-        for (x, p1) in self.probabilities.items():
-            if x in other.probabilities:
-                result[x] = p1 + other.probabilities[x]
+        # Pre-allocate result dictionary with all items from self
+        result = dict(self.probabilities)
+        
+        # Add or update with items from other
+        for x, p2 in other.probabilities.items():
+            if x in result:
+                result[x] += p2
             else:
-                result[x] = p1
-        for (x, p2) in other.probabilities.items():
-            if x not in self.probabilities:
                 result[x] = p2
+                
         return Distribution(result)
 
     def normalize(self) -> 'Distribution[T]':
@@ -220,7 +212,7 @@ class Distribution(Generic[T]):
 
     def prune(self) -> 'Distribution[T]':
 
-        if Distribution.PRUNE_FACTOR is None:
+        if Distribution.PRUNE_FACTOR is None or len(self.probabilities) < Distribution.PRUNE_THRESHOLD:
             return self
         
         max_prob = max(self.probabilities.values())
@@ -230,41 +222,19 @@ class Distribution(Generic[T]):
         return result
         
     def bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
-        # If distribution is large enough, use parallel processing
-        if len(self.probabilities) > PARALLEL_THRESHOLD:
-            return self._parallel_bind(f)
-        return self._sequential_bind(f)
-
-    def _sequential_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
-        """Monadic bind (>>=) for distributions.
-        Maps each value to a new distribution and combines the results."""
-        result: Dict[U, Fraction] = {}
-        for x, p1 in self.probabilities.items():
-            # Get new distribution from f
-            dist = f(x)
-            # Scale its probabilities by p1 and merge into result
-            for y, p2 in dist.probabilities.items():
-                result[y] = result.get(y, Fraction(0)) + p1 * p2
-        return Distribution(result).prune()
-
-    def _parallel_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
-        # items = list(self.probabilities.items())
-        # chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
-        # pool = self._get_multiprocessing_pool()
-        # process_chunk = partial(_process_chunk_bind, f=f)
-        # results = pool.map(process_chunk, chunks)
-        
-        # # Merge all partial results
-        # final_result: Dict[U, Fraction] = {}
-        # for partial_result in results:
-        #     if isinstance(partial_result, ExceptionWrapper):
-        #         partial_result.re_raise()
-        #     else:
-        #         for k, v in partial_result.items():
-        #             final_result[k] = final_result.get(k, Fraction(0)) + v
-        
-        # return Distribution(final_result)
-        raise NotImplementedError("Parallel bind not implemented")
+        """Monadic bind - apply a function that returns a distribution to each value."""
+        result = {}
+        # Use explicit loops instead of nested comprehensions
+        for value, prob1 in self.probabilities.items():
+            inner_dist = f(value)
+            for inner_value, prob2 in inner_dist.probabilities.items():
+                # Calculate combined probability
+                combined_prob = prob1 * prob2
+                if inner_value in result:
+                    result[inner_value] += combined_prob
+                else:
+                    result[inner_value] = combined_prob
+        return Distribution(result)
 
     def bind_on_match(self, key_pred: Callable[[T], bool], f: Callable[[T], 'Distribution[T]']) -> 'Distribution[T]':
         

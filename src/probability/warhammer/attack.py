@@ -45,28 +45,13 @@ def roll_for_attacks(profile: AttackProfile, modifiers: List[Modifier]) -> Distr
     """Roll to determine number of attacks"""
     # Get attack count distribution
     attack_dist = profile.attacks.roll()
-    attack_dist = attack_dist.map(lambda x: DieResult(x, AttackSequence({AttackStage.ATTACKS: x})))
-    model_dist = Distribution.singleton(AttackSequence({AttackStage.START: profile.models * profile.guns_per_model}))
+    attack_dist = attack_dist.map(lambda x: DieResult(x, AttackSequence(attacks=x)))
+    model_dist = Distribution.singleton(AttackSequence(start=profile.models * profile.guns_per_model))
     model_dist = model_dist.bind(perform_rolls_bind(AttackStage.START, attack_dist))
     
     return model_dist
 
 
-   
-
-def merge_stage(old_seq: AttackSequence, roll_seq_boxed: Union[AttackSequence, DieResult], stage: AttackStage) -> AttackSequence:
-    """Generic merge function that adds values for a specific stage."""
-    new_vals = dict(old_seq.values)
-
-    roll_seq: AttackSequence
-    if isinstance(roll_seq_boxed, DieResult):
-        if roll_seq_boxed.sequence is None:
-            raise ValueError("DieResult has no sequence")
-        roll_seq = roll_seq_boxed.sequence
-    else:
-        roll_seq = roll_seq_boxed
-
-    return old_seq + roll_seq
 
 def apply_modifiers(dist: Distribution[DieResult], stage: AttackStage, profile: AttackProfile, 
                    defender: Defender, modifiers: List[Modifier]) -> Distribution[DieResult]:
@@ -77,15 +62,13 @@ def apply_modifiers(dist: Distribution[DieResult], stage: AttackStage, profile: 
 
 def roll_to_hit(attack_dist: Distribution[AttackSequence], profile: AttackProfile, 
                 defender: Defender, modifiers: List[Modifier]) -> Distribution[AttackSequence]:
-    # Apply profile modifiers first
-    
     threshold = min(6, max(2, profile.ballistic_skill))
     
     # Create distribution for a single hit roll
     single_hit_roll = d6.filter(
         pred=lambda x: x >= threshold,
-        if_true=lambda x: DieResult(x, AttackSequence({AttackStage.HITS: 1}), True),  # Hit
-        if_false=lambda x: DieResult(x, AttackSequence({AttackStage.HITS: 0}), False)   # Miss
+        if_true=lambda x: DieResult(x, AttackSequence(hits=1), True),  # Hit
+        if_false=lambda x: DieResult(x, AttackSequence(hits=0), False)   # Miss
     )
     single_hit_roll = single_hit_roll.map(six_critical)
     single_hit_roll = apply_modifiers(single_hit_roll, AttackStage.HITS, profile, defender, modifiers)
@@ -103,8 +86,8 @@ def roll_to_wound(hit_dist: Distribution[AttackSequence], profile: AttackProfile
     # Create distribution for a single wound roll
     single_wound_roll = d6.filter(
         pred=lambda x: x >= threshold,
-        if_true=lambda x: DieResult(x, AttackSequence({AttackStage.WOUNDS: 1}), True),  # Wound
-        if_false=lambda x: DieResult(x, AttackSequence({AttackStage.WOUNDS: 0}), False)   # Fail
+        if_true=lambda x: DieResult(x, AttackSequence(wounds=1), True),  # Wound
+        if_false=lambda x: DieResult(x, AttackSequence(wounds=0), False)   # Fail
     )
     single_wound_roll = single_wound_roll.map(six_critical)
 
@@ -114,7 +97,7 @@ def roll_to_wound(hit_dist: Distribution[AttackSequence], profile: AttackProfile
 
 
 def unwrap_die_result(dist: Distribution[DieResult]) -> Distribution[AttackSequence]:
-    return dist.map(lambda x: x.sequence if x.sequence else AttackSequence.create(0, AttackStage.DAMAGE))
+    return dist.map(lambda x: x.sequence)
 
 class AttackConfig:
     batch_save_roll = True
@@ -155,8 +138,8 @@ def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifi
     
     save_roll = d6.filter(
         pred=lambda x: x >= armor_save_threshold,
-        if_true=lambda x: DieResult(x, AttackSequence({AttackStage.FAILED_SAVES: 0}), True),  # Save successful - no damage
-        if_false=lambda x: DieResult(x, AttackSequence({AttackStage.FAILED_SAVES: 1}), False)   # Save failed - wound goes through
+        if_true=lambda x: DieResult(x, AttackSequence(failed_saves=0), True),  # Save successful - no damage
+        if_false=lambda x: DieResult(x, AttackSequence(failed_saves=1), False)   # Save failed - wound goes through
     )
     save_roll = apply_modifiers(save_roll, AttackStage.FAILED_SAVES, profile, defender, modifiers)
     
@@ -165,11 +148,13 @@ def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifi
         rolls_in_batch = 1
     elif defender.multiple_save_profiles():
         currently_dealt_damage = state.get_value(AttackStage.FELT_DMG)
-        rolls_in_batch = (current_defender_profile.wounds - currently_dealt_damage) // profile.damage.max_possible()
-        rolls_in_batch = max(rolls_in_batch, 1)
+        wounds_in_this_profile = current_defender_profile.wounds - currently_dealt_damage + (current_defender_profile.wounds * (current_defender_profile.models - 1))
+        rolls_in_batch = ((wounds_in_this_profile) // profile.damage.max_possible())
+        rolls_in_batch = max(rolls_in_batch, 1) 
+
     return perform_rolls(AttackStage.WOUNDS, save_roll, state, max_rolls=rolls_in_batch)
 
-def cleanly_divisible_wounds_batch_size(defender: Defender, possible_results: Distribution[DieResult], state: AttackSequence, output_stage: AttackStage) -> int | None:
+def cleanly_divisible_wounds_batch_size(defender: Defender, possible_results: Distribution[DieResult], state: AttackSequence, output_stage: AttackStage) -> Tuple[int, Distribution[DieResult]] | None:
     current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
     if current_defender_profile is None:
         return None
@@ -182,16 +167,20 @@ def cleanly_divisible_wounds_batch_size(defender: Defender, possible_results: Di
     damage = possible_results.get_singleton().sequence.get_value(output_stage)
     if damage == 0:
         return None
-    if current_defender_profile.wounds % damage != 0 or damage > current_defender_profile.wounds:
+    if current_defender_profile.wounds % damage != 0 and damage < current_defender_profile.wounds:
         return None
-    shots_per_model = current_defender_profile.wounds // damage
-    return (current_defender_profile.models - state.get_value(AttackStage.MODELS_SLAIN)) * shots_per_model
+    if damage > current_defender_profile.wounds:
+        shots_per_model = 1
+        new_possible_results = possible_results.map(lambda x: DieResult(x.value, x.sequence.freeze_quant(output_stage, damage - current_defender_profile.wounds), x.passes_check))
+        return (current_defender_profile.models - state.get_value(AttackStage.MODELS_SLAIN)) * shots_per_model, new_possible_results
+    else:
+        shots_per_model = current_defender_profile.wounds // damage
+        return (current_defender_profile.models - state.get_value(AttackStage.MODELS_SLAIN)) * shots_per_model, possible_results
 
 def safely_reduce_damage_result(current_defender_profile: DefenderProfile) -> Callable[[DieResult], DieResult]:
     def fn(result: DieResult) -> DieResult:
         current_damage = result.sequence.get_value(AttackStage.DAMAGE)
         new_sequence = result.sequence.freeze_quant(AttackStage.DAMAGE, current_damage - current_defender_profile.wounds)
-        print(new_sequence)
         return DieResult(result.value, new_sequence, result.passes_check)
     return fn
 
@@ -206,19 +195,23 @@ def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modi
         return Distribution.singleton(state)
     
     damage_dist = profile.damage.roll()
-    damage_rolls = damage_dist.map(lambda n: DieResult(n, AttackSequence({output_stage: n})))
+    damage_rolls = damage_dist.map(lambda n: DieResult(n, AttackSequence(**{output_stage.name.lower(): n})))
     damage_rolls = apply_modifiers(damage_rolls, output_stage, profile, defender, modifiers)
+
+    max_possible_damage = max(damage_rolls.map(lambda x: x.sequence.get_value(output_stage)).probabilities.keys())
 
     rolls_in_batch = 1
     if AttackConfig.batch_damage_roll:
         maybe_batch_size = cleanly_divisible_wounds_batch_size(defender, damage_rolls, state, output_stage)
         if maybe_batch_size is not None:
-            rolls_in_batch = maybe_batch_size
+            rolls_in_batch, damage_rolls = maybe_batch_size
         else:
             defender_remaining_wounds = current_defender_profile.wounds - state.get_value(AttackStage.FELT_DMG)
-            rolls_in_batch = defender_remaining_wounds // profile.damage.max_possible()
+            rolls_in_batch = defender_remaining_wounds // max_possible_damage
             rolls_in_batch = max(rolls_in_batch, 1)
-    return perform_rolls(target_stage, damage_rolls, state, max_rolls=rolls_in_batch)
+    result = perform_rolls(target_stage, damage_rolls, state, max_rolls=rolls_in_batch)
+    return result.map(lambda x: x.with_value(AttackStage.PROCESSING_FAILED_SAVES, rolls_in_batch))
+    return result
 
 
 def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
@@ -228,12 +221,18 @@ def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifie
         target_stage = AttackStage.MORTAL_DAMAGE
     if not current_defender_profile or state.get_value(target_stage) == 0:
         return Distribution.singleton(state)
+
+    if current_defender_profile.feel_no_pain is None:
+        next_state = state \
+            .with_value(AttackStage.FELT_DMG, state.get_value(target_stage) + state.get_value(AttackStage.FELT_DMG)) \
+            .freeze_all(target_stage)
+        return Distribution.singleton(next_state)
     
-    fnp = current_defender_profile.feel_no_pain if current_defender_profile.feel_no_pain else 7
+    fnp = current_defender_profile.feel_no_pain
     fnp_roll = d6.filter(
         pred=lambda x: x >= fnp,
-        if_true=lambda x: DieResult(x, AttackSequence({AttackStage.FELT_DMG: 0}), True),  # FNP successful - no damage
-        if_false=lambda x: DieResult(x, AttackSequence({AttackStage.FELT_DMG: 1}), False)   # FNP failed - damage goes through
+        if_true=lambda x: DieResult(x, AttackSequence(felt_dmg=0), True),  # FNP successful - no damage
+        if_false=lambda x: DieResult(x, AttackSequence(felt_dmg=1), False)   # FNP failed - damage goes through
     )
     fnp_roll = apply_modifiers(fnp_roll, AttackStage.FELT_DMG, profile, defender, modifiers)
     
@@ -257,8 +256,14 @@ def slay_models(defender: Defender, profile: AttackProfile, modifiers: List[Modi
     result : AttackSequence
     if state.get_value(AttackStage.FELT_DMG) >= defender_wounds:
         num_slain : int = state.get_value(AttackStage.FELT_DMG) // defender_wounds
-        result = state.with_value(AttackStage.MODELS_SLAIN, state.get_value(AttackStage.MODELS_SLAIN) + num_slain) \
-            .freeze_all(AttackStage.FELT_DMG)
+        allow_spill_over = state.get_value(AttackStage.PROCESSING_FAILED_SAVES) > 1
+        num_slain = min(num_slain, state.get_value(AttackStage.PROCESSING_FAILED_SAVES))
+        max_felt_dmg = min(num_slain * defender_wounds, state.get_value(AttackStage.FELT_DMG))
+        result = state \
+            .with_value(AttackStage.MODELS_SLAIN, state.get_value(AttackStage.MODELS_SLAIN) + num_slain) \
+            .freeze_quant(AttackStage.FELT_DMG, max_felt_dmg) \
+            .with_value(AttackStage.FELT_DMG, 0 if not allow_spill_over else state.get_value(AttackStage.FELT_DMG) - max_felt_dmg) \
+            .freeze_all(AttackStage.PROCESSING_FAILED_SAVES)
 
     else:
         result = state
@@ -270,9 +275,6 @@ state_cache = {}
 
 def do_dmg_sequence(wound_dist: Distribution[AttackSequence], defender: Defender, profile: AttackProfile, modifiers: List[Modifier], timing: 'TimingInfo') -> Distribution[AttackSequence]:
     """Run the damage sequence with timing information"""
-    allow_batch_saves = not defender.multiple_save_profiles() and AttackConfig.batch_save_roll
-    allow_batch_damage = not defender.has_any_fnp() and AttackConfig.batch_damage_roll
-
 
     save_roll_fn = liftM(memoize(partial(save_roll, defender, profile, modifiers)))
     damage_roll_fn = liftM(memoize(partial(damage_roll, defender, profile, modifiers)))
@@ -306,16 +308,6 @@ def do_dmg_sequence(wound_dist: Distribution[AttackSequence], defender: Defender
     return current
 
 
-def bind_stage(dist: Distribution[AttackSequence], stage: AttackStage, 
-              f: Callable[[int], Distribution[int]]) -> Distribution[AttackSequence]:
-    """Bind a function to a specific stage's value in an AttackSequence."""
-    return dist.bind(lambda seq: f(seq.get_value(stage)).map(
-        lambda new_val: AttackSequence({
-            **seq.values,
-            stage: new_val
-        })
-    ))
-
 def collapse_stage(dist: Distribution[AttackSequence], stage: AttackStage) -> Distribution[AttackSequence]:
     """Collapse a stage's value into a single value"""
     return dist.map(lambda seq: AttackSequence.create(seq.get_value(stage) + seq.get_frozen(stage), stage))
@@ -330,11 +322,6 @@ def collapse_stages(dist: Distribution[AttackSequence], stages: List[AttackStage
         return total
     result = dist.map(lambda seq: AttackSequence.create(get_values(seq), first_stage))
     return result
-
-
-def cap_stage(dist: Distribution[AttackSequence], stage: AttackStage, cap: int) -> Distribution[AttackSequence]:
-    """Cap a stage's value at a specific value"""
-    return dist.map(lambda seq: AttackSequence.create(min(seq.get_value(stage), cap), stage))
 
 
 @dataclass
@@ -531,7 +518,6 @@ def simulate_attacks_internal(
     
     total_time = perf_counter() - start_time
     timing.total_time = total_time
-    timing.max_entries_achieved = Distribution.MAX_ENTRIES_ACHIEVED
 
     close_multiprocessing_pool()
 

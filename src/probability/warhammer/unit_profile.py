@@ -44,6 +44,7 @@ class AttackStage(Enum):
     MORTAL_WOUNDS = auto()
     MORTAL_DAMAGE = auto()
     FAILED_SAVES = auto()
+    PROCESSING_FAILED_SAVES = auto()
     DAMAGE = auto()
     FELT_DMG = auto()
     MODELS_SLAIN = auto()
@@ -188,132 +189,309 @@ class ModelState:
     profile: DefenderProfile
     wounds_remaining: int
 
-@dataclass(frozen=True) 
 class AttackSequence:
-    values: Dict[AttackStage, int]
-    frozen: Dict[AttackStage, int] = field(default_factory=dict)
+    # Values for each stage
+    start: int = 0
+    attacks: int = 0
+    hits: int = 0
+    wounds: int = 0
+    mortal_wounds: int = 0
+    mortal_damage: int = 0
+    failed_saves: int = 0
+    processing_failed_saves: int = 0
+    damage: int = 0
+    felt_dmg: int = 0
+    models_slain: int = 0
+    complete: int = 0
+
+    # Frozen values for each stage
+    frozen_start: int = 0
+    frozen_attacks: int = 0
+    frozen_hits: int = 0
+    frozen_wounds: int = 0
+    frozen_mortal_wounds: int = 0
+    frozen_mortal_damage: int = 0
+    frozen_failed_saves: int = 0
+    frozen_processing_failed_saves: int = 0
+    frozen_damage: int = 0
+    frozen_felt_dmg: int = 0
+    frozen_models_slain: int = 0
+    frozen_complete: int = 0
+
     hash_val: int = 0
 
-    def __post_init__(self):
-        object.__setattr__(self, 'hash_val', self.do_hash())
-
+    def __init__(self, start=0, attacks=0, hits=0, wounds=0, mortal_wounds=0, mortal_damage=0, failed_saves=0, processing_failed_saves=0, damage=0, felt_dmg=0, models_slain=0, complete=0, frozen_start=0, frozen_attacks=0, frozen_hits=0, frozen_wounds=0, frozen_mortal_wounds=0, frozen_mortal_damage=0, frozen_failed_saves=0, frozen_processing_failed_saves=0, frozen_damage=0, frozen_felt_dmg=0, frozen_models_slain=0, frozen_complete=0):
+        self.start = start
+        self.attacks = attacks
+        self.hits = hits
+        self.wounds = wounds
+        self.mortal_wounds = mortal_wounds
+        self.mortal_damage = mortal_damage
+        self.failed_saves = failed_saves
+        self.processing_failed_saves = processing_failed_saves
+        self.damage = damage
+        self.felt_dmg = felt_dmg
+        self.models_slain = models_slain
+        self.complete = complete
+        self.frozen_start = frozen_start
+        self.frozen_attacks = frozen_attacks
+        self.frozen_hits = frozen_hits
+        self.frozen_wounds = frozen_wounds
+        self.frozen_mortal_wounds = frozen_mortal_wounds
+        self.frozen_mortal_damage = frozen_mortal_damage
+        self.frozen_failed_saves = frozen_failed_saves
+        self.frozen_processing_failed_saves = frozen_processing_failed_saves
+        self.frozen_damage = frozen_damage
+        self.frozen_felt_dmg = frozen_felt_dmg
+        self.frozen_models_slain = frozen_models_slain
+        self.frozen_complete = frozen_complete
+        self.hash_val = self.do_hash()
 
     @classmethod
     def create(cls, value: int, stage: AttackStage) -> 'AttackSequence':
-        """Create a new sequence with a single value at the given stage"""
-        return cls(values={stage: value})
+        return cls(**{stage.name.lower(): value})
+
+    def _get_stage_attr(self, stage: AttackStage) -> str:
+        return stage.name.lower()
+
+    def _get_frozen_attr(self, stage: AttackStage) -> str:
+        return f"frozen_{stage.name.lower()}"
 
     def clear_frozen(self) -> 'AttackSequence':
         """Clear all frozen values"""
-        return AttackSequence(values=self.values, frozen={})
+        return AttackSequence(
+            start=self.start,
+            attacks=self.attacks,
+            hits=self.hits,
+            wounds=self.wounds,
+            mortal_wounds=self.mortal_wounds,
+            mortal_damage=self.mortal_damage,
+            failed_saves=self.failed_saves,
+            processing_failed_saves=self.processing_failed_saves,
+            damage=self.damage,
+            felt_dmg=self.felt_dmg,
+            models_slain=self.models_slain,
+            complete=self.complete
+        )
 
     def freeze_all(self, stage: AttackStage) -> 'AttackSequence':
         """Freeze a value at a stage"""
-        new_values = self.values.copy()
-        new_frozen = self.frozen.copy()
-        new_frozen[stage] = self.get_value(stage) + self.get_frozen(stage)
-        new_values[stage] = 0
-        return AttackSequence(values=new_values, frozen=new_frozen)
+        return self.with_frozen(stage, self.get_value(stage) + self.get_frozen(stage)).with_value(stage, 0)
 
     def freeze_quant(self, stage: AttackStage, quant: int) -> 'AttackSequence':
-        """Freeze a value at a stage"""
-        new_values = self.values.copy()
-        new_frozen = self.frozen.copy()
+        """Freeze a quantity at a stage"""
         if quant > self.get_value(stage):
             raise ValueError(f"Cannot freeze more than the value at stage {stage}")
-        new_frozen[stage] = self.get_frozen(stage) + quant
-        new_values[stage] = self.get_value(stage) - quant
-        return AttackSequence(values=new_values, frozen=new_frozen)
+        return self.with_frozen(stage, self.get_frozen(stage) + quant).with_value(stage, self.get_value(stage) - quant)
 
     def zero_out(self, stage: AttackStage) -> 'AttackSequence':
         """Zero out a value at a stage"""
-        new_values = self.values.copy()
-        new_frozen = self.frozen.copy()
-        new_values[stage] = 0
-        new_frozen[stage] = 0
-        return AttackSequence(values=new_values, frozen=new_frozen)
+        return self.with_value(stage, 0).with_frozen(stage, 0)
 
     def zero_frozen(self, stage: AttackStage) -> 'AttackSequence':
         """Zero out a frozen value at a stage"""
-        new_frozen = self.frozen.copy()
-        new_frozen[stage] = 0
-        return AttackSequence(values=self.values, frozen=new_frozen)
+        return self.with_frozen(stage, 0)
 
     def freeze_one(self, stage: AttackStage) -> 'AttackSequence':
-        """Freeze a value at a stage"""
-        new_values = self.values.copy()
-        new_frozen = self.frozen.copy()
-        amount = min(self.get_value(stage), 1)
-        new_frozen[stage] = amount + self.get_frozen(stage)
-        new_values[stage] = self.get_value(stage) - amount
-        return AttackSequence(values=new_values, frozen=new_frozen)
+        """Freeze one value at a stage"""
+        return self.freeze_quant(stage, min(self.get_value(stage), 1))
 
-    
+    def get_value(self, stage: AttackStage, default: int = 0) -> int:
+        """Get the value for a stage"""
+        match stage:
+            case AttackStage.START:
+                return self.start
+            case AttackStage.ATTACKS:
+                return self.attacks
+            case AttackStage.HITS:
+                return self.hits
+            case AttackStage.WOUNDS:
+                return self.wounds
+            case AttackStage.MORTAL_WOUNDS:
+                return self.mortal_wounds
+            case AttackStage.MORTAL_DAMAGE:
+                return self.mortal_damage
+            case AttackStage.FAILED_SAVES:
+                return self.failed_saves
+            case AttackStage.PROCESSING_FAILED_SAVES:
+                return self.processing_failed_saves
+            case AttackStage.DAMAGE:
+                return self.damage
+            case AttackStage.FELT_DMG:
+                return self.felt_dmg
+            case AttackStage.MODELS_SLAIN:
+                return self.models_slain
+            case AttackStage.COMPLETE:
+                return self.complete
+        return default
+
+    def get_frozen(self, stage: AttackStage, default: int = 0) -> int:
+        """Get the frozen value for a stage"""
+        match stage:
+            case AttackStage.START:
+                return self.frozen_start
+            case AttackStage.ATTACKS:
+                return self.frozen_attacks
+            case AttackStage.HITS:
+                return self.frozen_hits
+            case AttackStage.WOUNDS:
+                return self.frozen_wounds
+            case AttackStage.MORTAL_WOUNDS:
+                return self.frozen_mortal_wounds
+            case AttackStage.MORTAL_DAMAGE:
+                return self.frozen_mortal_damage
+            case AttackStage.FAILED_SAVES:
+                return self.frozen_failed_saves
+            case AttackStage.PROCESSING_FAILED_SAVES:
+                return self.frozen_processing_failed_saves
+            case AttackStage.DAMAGE:
+                return self.frozen_damage
+            case AttackStage.FELT_DMG:
+                return self.frozen_felt_dmg
+            case AttackStage.MODELS_SLAIN:
+                return self.frozen_models_slain
+            case AttackStage.COMPLETE:
+                return self.frozen_complete
+        return default
+
     def with_value(self, stage: AttackStage, value: int) -> 'AttackSequence':
         """Add or update a value for a stage"""
-        new_values = self.values.copy()
-        new_values[stage] = value
-        return AttackSequence(values=new_values, frozen=self.frozen)
+        return AttackSequence(
+            start=self.start if stage != AttackStage.START else value,
+            attacks=self.attacks if stage != AttackStage.ATTACKS else value,
+            hits=self.hits if stage != AttackStage.HITS else value,
+            wounds=self.wounds if stage != AttackStage.WOUNDS else value,
+            mortal_wounds=self.mortal_wounds if stage != AttackStage.MORTAL_WOUNDS else value,
+            mortal_damage=self.mortal_damage if stage != AttackStage.MORTAL_DAMAGE else value,
+            failed_saves=self.failed_saves if stage != AttackStage.FAILED_SAVES else value,
+            processing_failed_saves=self.processing_failed_saves if stage != AttackStage.PROCESSING_FAILED_SAVES else value,
+            damage=self.damage if stage != AttackStage.DAMAGE else value,
+            felt_dmg=self.felt_dmg if stage != AttackStage.FELT_DMG else value,
+            models_slain=self.models_slain if stage != AttackStage.MODELS_SLAIN else value,
+            complete=self.complete if stage != AttackStage.COMPLETE else value,
+            frozen_start=self.frozen_start,
+            frozen_attacks=self.frozen_attacks,
+            frozen_hits=self.frozen_hits,
+            frozen_wounds=self.frozen_wounds,
+            frozen_mortal_wounds=self.frozen_mortal_wounds,
+            frozen_mortal_damage=self.frozen_mortal_damage,
+            frozen_failed_saves=self.frozen_failed_saves,
+            frozen_processing_failed_saves=self.frozen_processing_failed_saves,
+            frozen_damage=self.frozen_damage,
+            frozen_felt_dmg=self.frozen_felt_dmg,
+            frozen_models_slain=self.frozen_models_slain,
+            frozen_complete=self.frozen_complete
+        )
 
     def with_frozen(self, stage: AttackStage, value: int) -> 'AttackSequence':
         """Add or update a frozen value for a stage"""
-        new_frozen = self.frozen.copy()
-        new_frozen[stage] = value
-        return AttackSequence(values=self.values.copy(), frozen=new_frozen)
-    
-    def get_value(self, stage: AttackStage, default: int = 0) -> int:
-        """Get the value for a stage"""
-        return self.values.get(stage, default)
-    
-    def get_frozen(self, stage: AttackStage, default: int = 0) -> int:
-        """Get the frozen value for a stage"""
-        return self.frozen.get(stage, default)
-    
+        return AttackSequence(
+            start=self.start,
+            attacks=self.attacks,
+            hits=self.hits,
+            wounds=self.wounds,
+            mortal_wounds=self.mortal_wounds,
+            mortal_damage=self.mortal_damage,
+            failed_saves=self.failed_saves,
+            processing_failed_saves=self.processing_failed_saves,
+            damage=self.damage,
+            felt_dmg=self.felt_dmg,
+            models_slain=self.models_slain,
+            complete=self.complete,
+            frozen_start=self.frozen_start if stage != AttackStage.START else value,
+            frozen_attacks=self.frozen_attacks if stage != AttackStage.ATTACKS else value,
+            frozen_hits=self.frozen_hits if stage != AttackStage.HITS else value,
+            frozen_wounds=self.frozen_wounds if stage != AttackStage.WOUNDS else value,
+            frozen_mortal_wounds=self.frozen_mortal_wounds if stage != AttackStage.MORTAL_WOUNDS else value,
+            frozen_mortal_damage=self.frozen_mortal_damage if stage != AttackStage.MORTAL_DAMAGE else value,
+            frozen_failed_saves=self.frozen_failed_saves if stage != AttackStage.FAILED_SAVES else value,
+            frozen_processing_failed_saves=self.frozen_processing_failed_saves if stage != AttackStage.PROCESSING_FAILED_SAVES else value,
+            frozen_damage=self.frozen_damage if stage != AttackStage.DAMAGE else value,
+            frozen_felt_dmg=self.frozen_felt_dmg if stage != AttackStage.FELT_DMG else value,
+            frozen_models_slain=self.frozen_models_slain if stage != AttackStage.MODELS_SLAIN else value,
+            frozen_complete=self.frozen_complete if stage != AttackStage.COMPLETE else value
+        )
+
     def __str__(self) -> str:
         """Print stages in order, omitting zeros unless all values are zero."""
         parts = []
-        all_zeros = all(val == 0 for val in self.values.values()) and all(val == 0 for val in self.frozen.values())
+        all_zeros = all(self.get_value(stage) == 0 and self.get_frozen(stage) == 0 
+                       for stage in AttackStage)
         
-        # Process stages in enum order
         for stage in sorted(AttackStage):
             val = self.get_value(stage)
             frozen_val = self.get_frozen(stage)
-
-            if stage in self.values or stage in self.frozen:
+            
+            if val != 0 or frozen_val != 0 or all_zeros:
                 if frozen_val != 0:
                     parts.append(f"{stage.name}:{val}+{frozen_val}*")
-                else:                            
+                else:
                     parts.append(f"{stage.name}:{val}")
         
         return f"[{', '.join(parts)}]"
 
     def __add__(self, other: 'AttackSequence') -> 'AttackSequence':
-        """Combine two sequences by adding their values.
-        Both sequences must be at the same stage.
-        """
-            
-        # Combine all values from both sequences
-        new_values = {}
-        new_frozen = {}
-        for stage in set(self.values.keys()) | set(other.values.keys()):
-            new_values[stage] = self.get_value(stage) + other.get_value(stage)
-        
-            
-        for stage in set(self.frozen.keys()) | set(other.frozen.keys()):
-            new_frozen[stage] = self.get_frozen(stage) + other.get_frozen(stage)
-            
-
-        return AttackSequence(values=new_values, frozen=new_frozen)
+        """Combine two sequences by adding their values."""
+        return AttackSequence(
+            start=self.start + other.start,
+            attacks=self.attacks + other.attacks,
+            hits=self.hits + other.hits,
+            wounds=self.wounds + other.wounds,
+            mortal_wounds=self.mortal_wounds + other.mortal_wounds,
+            mortal_damage=self.mortal_damage + other.mortal_damage,
+            failed_saves=self.failed_saves + other.failed_saves,
+            processing_failed_saves=self.processing_failed_saves + other.processing_failed_saves,
+            damage=self.damage + other.damage,
+            felt_dmg=self.felt_dmg + other.felt_dmg,
+            models_slain=self.models_slain + other.models_slain,
+            complete=self.complete + other.complete,
+            frozen_start=self.frozen_start + other.frozen_start,
+            frozen_attacks=self.frozen_attacks + other.frozen_attacks,
+            frozen_hits=self.frozen_hits + other.frozen_hits,
+            frozen_wounds=self.frozen_wounds + other.frozen_wounds,
+            frozen_mortal_wounds=self.frozen_mortal_wounds + other.frozen_mortal_wounds,
+            frozen_mortal_damage=self.frozen_mortal_damage + other.frozen_mortal_damage,
+            frozen_failed_saves=self.frozen_failed_saves + other.frozen_failed_saves,
+            frozen_processing_failed_saves=self.frozen_processing_failed_saves + other.frozen_processing_failed_saves,
+            frozen_damage=self.frozen_damage + other.frozen_damage,
+            frozen_felt_dmg=self.frozen_felt_dmg + other.frozen_felt_dmg,
+            frozen_models_slain=self.frozen_models_slain + other.frozen_models_slain,
+            frozen_complete=self.frozen_complete + other.frozen_complete
+        )
 
     def do_hash(self) -> int:
-        # Convert dict to tuple of tuples for hashing
-        items = tuple(sorted((stage, value) for stage, value in self.values.items() if value != 0))
-        frozen_items = tuple(sorted((stage, value) for stage, value in self.frozen.items() if value != 0))
-        return hash(items + frozen_items)
-    
+        # Combine all values into a single hash using prime multipliers
+        # Use negative values for frozen to distinguish them
+        h = 0
+        h = h * 31 + self.start
+        h = h * 31 + self.attacks
+        h = h * 31 + self.hits
+        h = h * 31 + self.wounds
+        h = h * 31 + self.mortal_wounds
+        h = h * 31 + self.mortal_damage
+        h = h * 31 + self.failed_saves
+        h = h * 31 + self.processing_failed_saves
+        h = h * 31 + self.damage
+        h = h * 31 + self.felt_dmg
+        h = h * 31 + self.models_slain
+        h = h * 31 + self.complete
+        h = h * 31 - self.frozen_start
+        h = h * 31 - self.frozen_attacks
+        h = h * 31 - self.frozen_hits
+        h = h * 31 - self.frozen_wounds
+        h = h * 31 - self.frozen_mortal_wounds
+        h = h * 31 - self.frozen_mortal_damage
+        h = h * 31 - self.frozen_failed_saves
+        h = h * 31 - self.frozen_processing_failed_saves
+        h = h * 31 - self.frozen_damage
+        h = h * 31 - self.frozen_felt_dmg
+        h = h * 31 - self.frozen_models_slain
+        h = h * 31 - self.frozen_complete
+        return h
+
     def __hash__(self) -> int:
-        return self.hash_val    
-        
+        return self.hash_val
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, AttackSequence):
             return NotImplemented
@@ -323,14 +501,11 @@ class AttackSequence:
         if not isinstance(other, AttackSequence):
             return NotImplemented
             
-        # Get all stages that appear in either sequence
-        all_stages = sorted(set(self.values.keys()) | set(self.frozen.keys()) | 
-                          set(other.values.keys()) | set(other.frozen.keys()))
-        
-        # Compare stage by stage
-        for stage in all_stages:
-            self_total = self.get_value(stage) + self.get_frozen(stage)
-            other_total = other.get_value(stage) + other.get_frozen(stage)
+        for stage in sorted(AttackStage):
+            self_total = (getattr(self, self._get_stage_attr(stage)) + 
+                         getattr(self, self._get_frozen_attr(stage)))
+            other_total = (getattr(other, self._get_stage_attr(stage)) + 
+                          getattr(other, self._get_frozen_attr(stage)))
             if self_total != other_total:
                 return self_total < other_total
                 
@@ -380,8 +555,7 @@ class LethalHits(Modifier):
 
     def crit_hit_auto_wound(self, result: DieResult) -> DieResult:
         if result.is_critical:
-            return DieResult(result.value, AttackSequence.create(1, AttackStage.WOUNDS)
-            .with_frozen(AttackStage.HITS, 1), True)
+            return DieResult(result.value, AttackSequence(wounds=1, frozen_hits=1), True)
         return result
     
     def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 
@@ -400,8 +574,7 @@ class DevastatingWounds(Modifier):
 
     def crit_wound_mortal_wound(self, result: DieResult) -> DieResult:
         if result.is_critical:
-            return DieResult(result.value, AttackSequence.create(1, AttackStage.MORTAL_WOUNDS)
-            .with_frozen(AttackStage.WOUNDS, 1), True)
+            return DieResult(result.value, AttackSequence(mortal_wounds=1, frozen_wounds=1), True)
         return result
     
     def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 

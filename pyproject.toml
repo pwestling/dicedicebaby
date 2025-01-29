@@ -5,6 +5,7 @@ description = "A probability calculator for tabletop wargames"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cfractions>=2.4.0",
 ]
 
 [project.optional-dependencies]

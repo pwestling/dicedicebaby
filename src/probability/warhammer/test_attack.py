@@ -478,7 +478,7 @@ test_cases = [
         defender=Defender(
             name="Test Defender",
             profiles=[DefenderProfile(
-                name="Test Model",
+                name="FirstModelNoFNP",
                 models=3,
                 toughness=4,
                 armor_save=4,
@@ -490,7 +490,7 @@ test_cases = [
                 is_leader=False
             ),
             DefenderProfile(
-                name="Test Model 2",
+                name="SecondModelHasFNP",
                 models=3,
                 toughness=4,
                 armor_save=3,
@@ -610,7 +610,7 @@ test_cases = [
 
 slow_test_cases = [
     TestCase(
-        name="60 attacks damage 1d3 vs 3 wounds SUPER SLOW",
+        name="60 attacks damage 1d3 vs 2 wounds SUPER SLOW",
         attack_profile=AttackProfile(
             name="Test Profile",
             models=1,
@@ -699,8 +699,11 @@ def stop_profiling(profiler: Any) -> None:
     import pstats
 
     profiler.disable()
-    stats = pstats.Stats(profiler).sort_stats(pstats.SortKey.CUMULATIVE)
+    stats = pstats.Stats(profiler)
+    stats.sort_stats(pstats.SortKey.CUMULATIVE)
     stats.print_stats(50) 
+    stats.sort_stats(pstats.SortKey.TIME)
+    stats.print_stats(20)
 
 def run_in_monte_carlo_mode() -> None:
     AttackConfig.monte_carlo = True
@@ -720,14 +723,13 @@ def run_test_suite() -> None:
     failed_tests = []
     passed_tests = []
 
-    run_in_monte_carlo_mode()
+    # run_in_monte_carlo_mode()
 
     
     for test in all_tests:
         if not run_test_case(test):
             all_passed = False
             failed_tests.append(test)
-            break
         else:
             passed_tests.append(test)
     
