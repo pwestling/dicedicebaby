@@ -8,7 +8,7 @@ from ..distribution import Distribution
 @dataclass
 class DieResult:
     value: int
-    sequence: Optional['AttackSequence']
+    sequence: 'AttackSequence'
     passes_check: Union[bool, None] = None
     is_critical: bool = False
 
@@ -34,7 +34,7 @@ class DieResult:
     def __add__(self, other: object) -> 'DieResult':
         if not isinstance(other, DieResult):
             return NotImplemented
-        return DieResult(self.value + other.value, self.sequence + other.sequence if self.sequence is not None and other.sequence is not None else None)
+        return DieResult(self.value + other.value, self.sequence + other.sequence)
 
 class AttackStage(Enum):
     START = auto()
@@ -85,6 +85,7 @@ class AttackProfile:
     damage: DiceFormula
     keywords: List[str]
     modifiers: List[Modifier]
+
 
 @dataclass
 class DefenderProfile:
@@ -220,7 +221,7 @@ class AttackSequence:
         new_frozen = self.frozen.copy()
         if quant > self.get_value(stage):
             raise ValueError(f"Cannot freeze more than the value at stage {stage}")
-        new_frozen[stage] = quant
+        new_frozen[stage] = self.get_frozen(stage) + quant
         new_values[stage] = self.get_value(stage) - quant
         return AttackSequence(values=new_values, frozen=new_frozen)
 
@@ -340,14 +341,19 @@ class AttackSequence:
 class RerollOnes:
     """Reroll 1s for a specific stage"""
     stage: AttackStage
-    
+
     def modify_roll(self, value: Distribution[DieResult], stage: 'AttackStage', 
                    profile: 'AttackProfile', defender: 'DefenderProfile',
                    prev_sequence: Optional['AttackSequence'] = None) -> Distribution[DieResult]:
         if stage != self.stage:
             return value
+
+        def reroll_one(result: DieResult) -> Distribution[DieResult]:
+            if result.value == 1:
+                return value
+            return Distribution.singleton(result)
         
-        return value.bind_on_match(DieResult(1, prev_sequence), lambda _: value)
+        return value.bind(reroll_one)
 
 @dataclass
 class RerollAllFails(Modifier):

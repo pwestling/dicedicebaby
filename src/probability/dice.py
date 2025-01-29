@@ -52,6 +52,14 @@ class DiceFormula:
             "modifier": self.modifier
         }
 
+    def max_possible(self) -> int:
+        """Return the maximum possible value for this formula"""
+        return self.dice * self.sides + self.modifier
+
+    def min_possible(self) -> int:
+        """Return the minimum possible value for this formula"""
+        return self.dice + self.modifier
+
     @staticmethod
     def from_dict(data: Dict[str, int]) -> 'DiceFormula':
         """Create from JSON-serializable dictionary"""

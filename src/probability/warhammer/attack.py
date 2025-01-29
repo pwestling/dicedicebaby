@@ -24,8 +24,8 @@ def get_wound_threshold(strength: int, toughness: int) -> int:
         return 6
     return 5
 
-def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], state: AttackSequence) -> Distribution[AttackSequence]:
-    quant = state.get_value(quant_stage)
+def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], state: AttackSequence, max_rolls: int | None = None) -> Distribution[AttackSequence]:
+    quant = state.get_value(quant_stage) if max_rolls is None else min(state.get_value(quant_stage), max_rolls)
     if quant == 0:
         return Distribution.singleton(state)
     
@@ -33,7 +33,7 @@ def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], s
     combined = monte_carlo_repeat(unwrapped, quant)
     combined = combined.prune()
  
-    result = combined.map(lambda x: x + state.freeze_all(quant_stage))
+    result = combined.map(lambda x: x + state.freeze_quant(quant_stage, quant))
     return result
 
 def perform_rolls_bind(quant_stage: AttackStage, die_roll: Distribution[DieResult]) -> Callable[[AttackSequence], Distribution[AttackSequence]]:
@@ -156,22 +156,40 @@ def save_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifi
     )
     save_roll = apply_modifiers(save_roll, AttackStage.FAILED_SAVES, profile, defender, modifiers)
     
-    if defender.multiple_save_profiles() or not AttackConfig.batch_save_roll:
-        if state.get_value(AttackStage.FAILED_SAVES) > 0:
-            return Distribution.singleton(state)
-        next_state = state.freeze_one(AttackStage.WOUNDS)
-        save_roll = monte_carlo(save_roll)
-        result = save_roll.map(lambda x: (x.sequence + next_state) if x.sequence else next_state)
-        return result
-    else:
-        return perform_rolls(AttackStage.WOUNDS, save_roll, state)
+    rolls_in_batch = None # unlimited
+    if not AttackConfig.batch_save_roll:
+        rolls_in_batch = 1
+    elif defender.multiple_save_profiles():
+        currently_dealt_damage = state.get_value(AttackStage.FELT_DMG)
+        rolls_in_batch = (current_defender_profile.wounds - currently_dealt_damage) // profile.damage.max_possible()
+        rolls_in_batch = max(rolls_in_batch, 1)
+    return perform_rolls(AttackStage.WOUNDS, save_roll, state, max_rolls=rolls_in_batch)
 
-def batch_damage_allowed(defender: Defender, profile: AttackProfile) -> bool:
-    # return not defender.has_any_fnp() and \
-    #     not profile.damage.is_variable() and \
-    #     not defender.multiple_wound_profiles() and \
-    #     AttackConfig.batch_damage_roll
-    return False
+def cleanly_divisible_wounds_batch_size(defender: Defender, possible_results: Distribution[DieResult], state: AttackSequence, output_stage: AttackStage) -> int | None:
+    current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
+    if current_defender_profile is None:
+        return None
+    if state.get_value(AttackStage.FELT_DMG) > 0:
+        return None
+    if current_defender_profile.feel_no_pain is not None:
+        return None
+    if len(possible_results.probabilities) != 1:
+        return None
+    damage = possible_results.get_singleton().sequence.get_value(output_stage)
+    if damage == 0:
+        return None
+    if current_defender_profile.wounds % damage != 0 or damage > current_defender_profile.wounds:
+        return None
+    shots_per_model = current_defender_profile.wounds // damage
+    return (current_defender_profile.models - state.get_value(AttackStage.MODELS_SLAIN)) * shots_per_model
+
+def safely_reduce_damage_result(current_defender_profile: DefenderProfile) -> Callable[[DieResult], DieResult]:
+    def fn(result: DieResult) -> DieResult:
+        current_damage = result.sequence.get_value(AttackStage.DAMAGE)
+        new_sequence = result.sequence.freeze_quant(AttackStage.DAMAGE, current_damage - current_defender_profile.wounds)
+        print(new_sequence)
+        return DieResult(result.value, new_sequence, result.passes_check)
+    return fn
 
 def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:
     current_defender_profile = defender.get_next_profile(state.get_value(AttackStage.MODELS_SLAIN))
@@ -183,25 +201,20 @@ def damage_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modi
     if not current_defender_profile or state.get_value(target_stage) == 0:
         return Distribution.singleton(state)
     
-    next_state = state.freeze_one(target_stage)
-    
     damage_dist = profile.damage.roll()
     damage_rolls = damage_dist.map(lambda n: DieResult(n, AttackSequence({output_stage: n})))
     damage_rolls = apply_modifiers(damage_rolls, output_stage, profile, defender, modifiers)
-    
-    if not batch_damage_allowed(defender, profile):
-        damage_rolls = monte_carlo(damage_rolls)
-        damage_rolls = unwrap_die_result(damage_rolls)
-        result = damage_rolls.map(lambda x: x + next_state)
-        return result
-    else:
-        d = profile.damage.modifier
-        while d < current_defender_profile.wounds:
-            d += profile.damage.modifier
-        damage_ignored_per_model = d - current_defender_profile.wounds
-        
-        result = perform_rolls(target_stage, damage_rolls, state)
-        return result
+
+    rolls_in_batch = 1
+    if AttackConfig.batch_damage_roll:
+        maybe_batch_size = cleanly_divisible_wounds_batch_size(defender, damage_rolls, state, output_stage)
+        if maybe_batch_size is not None:
+            rolls_in_batch = maybe_batch_size
+        else:
+            defender_remaining_wounds = current_defender_profile.wounds - state.get_value(AttackStage.FELT_DMG)
+            rolls_in_batch = defender_remaining_wounds // profile.damage.max_possible()
+            rolls_in_batch = max(rolls_in_batch, 1)
+    return perform_rolls(target_stage, damage_rolls, state, max_rolls=rolls_in_batch)
 
 
 def fnp_roll(defender: Defender, profile: AttackProfile, modifiers: List[Modifier], state: AttackSequence) -> Distribution[AttackSequence]:

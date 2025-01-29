@@ -64,7 +64,6 @@ class Distribution(Generic[T]):
 
     probabilities: Dict[T, Fraction]
 
-
     def __str__(self) -> str:
         joiner = ",\n"
 
@@ -106,6 +105,11 @@ class Distribution(Generic[T]):
         n = len(xs)
         return cls({x: Fraction(1, n) for x in xs})
     
+    def get_singleton(self) -> T:
+        if len(self.probabilities) != 1:
+            raise ValueError("Distribution is not a singleton")
+        return list(self.probabilities.keys())[0]
+
     def map(self, f: Callable[[T], U]) -> 'Distribution[U]':
         result: Dict[U, Fraction] = {}
         for x, p in self.probabilities.items():
@@ -264,11 +268,11 @@ class Distribution(Generic[T]):
         
         return Distribution(final_result)
 
-    def bind_on_match(self, key: T, f: Callable[[T], 'Distribution[T]']) -> 'Distribution[T]':
+    def bind_on_match(self, key_pred: Callable[[T], bool], f: Callable[[T], 'Distribution[T]']) -> 'Distribution[T]':
         
         def bind_fn(some_key: T) -> Distribution[T]:
             
-            if some_key == key:
+            if key_pred(some_key):
                 return f(some_key)
             return Distribution.singleton(some_key)
         
