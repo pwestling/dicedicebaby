@@ -718,12 +718,12 @@ def run_test_suite() -> None:
     all_passed = True
     all_tests = []
     all_tests.extend(test_cases)
-    # all_tests.extend(slow_test_cases)
+    all_tests.extend(slow_test_cases)
 
     failed_tests = []
     passed_tests = []
 
-    # run_in_monte_carlo_mode()
+    run_in_monte_carlo_mode()
 
     
     for test in all_tests:

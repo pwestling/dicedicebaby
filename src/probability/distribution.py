@@ -55,7 +55,7 @@ def close_multiprocessing_pool():
 class Distribution(Generic[T]):
 
     EPSILON : ClassVar[Fraction] = Fraction(1, 10000)
-    PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 1000000)
+    PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 100000)
     PRUNE_THRESHOLD : ClassVar[int] = 10000
 
 
@@ -259,6 +259,7 @@ d6 = Distribution.uniform(list(range(1, 7)))
 d3 = Distribution.uniform(list(range(1, 4))) 
 
 def memoize(f: F) -> F:
+    return f
     """Decorator that memoizes a function's return value based on its arguments.
     
     Works with both regular functions and methods. For methods, the instance id is 

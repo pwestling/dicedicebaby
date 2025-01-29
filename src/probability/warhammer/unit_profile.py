@@ -245,7 +245,6 @@ class AttackSequence:
         self.frozen_felt_dmg = frozen_felt_dmg
         self.frozen_models_slain = frozen_models_slain
         self.frozen_complete = frozen_complete
-        self.hash_val = self.do_hash()
 
     @classmethod
     def create(cls, value: int, stage: AttackStage) -> 'AttackSequence':
@@ -490,6 +489,8 @@ class AttackSequence:
         return h
 
     def __hash__(self) -> int:
+        if self.hash_val == 0:
+            self.hash_val = self.do_hash()
         return self.hash_val
 
     def __eq__(self, other: object) -> bool:
