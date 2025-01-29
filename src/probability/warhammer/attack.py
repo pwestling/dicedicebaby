@@ -1,4 +1,4 @@
-from probability.warhammer.profile import *
+from probability.warhammer.unit_profile import *
 from probability.distribution import Distribution, d6, memoize, liftM, lift, Box, close_multiprocessing_pool
 from probability.dice import DiceFormula
 from typing import List, Optional, Callable, TypeVar, Union, Dict, Any, Tuple
@@ -464,15 +464,16 @@ def simulate_attacks(
 ) -> AttackResults:
     if AttackConfig.monte_carlo:
         start_time = perf_counter()
-        batch_size = get_batch_size()
-        num_tasks = (AttackConfig.monte_carlo_simulations + batch_size - 1) // batch_size
         if AttackConfig.multiprocessing:
+            batch_size = get_batch_size()
+            num_tasks = (AttackConfig.monte_carlo_simulations + batch_size - 1) // batch_size
             with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
                 tasks = [(attack_profile, defender, modifiers, batch_size)] * num_tasks
                 futures = [executor.submit(_run_monte_carlo_batch, task) for task in tasks]
                 results = [future.result() for future in futures]
         else:
             results = []
+            print(f"Running {AttackConfig.monte_carlo_simulations} simulations single threaded")
             for _ in range(AttackConfig.monte_carlo_simulations):
                 results.append(simulate_attacks_internal(attack_profile, defender, modifiers))
 

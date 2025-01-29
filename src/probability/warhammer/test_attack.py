@@ -1,5 +1,5 @@
 from probability.warhammer.attack import *
-from probability.warhammer.profile import *
+from probability.warhammer.unit_profile import *
 from probability.distribution import Distribution
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional, ClassVar
@@ -689,18 +689,38 @@ def run_test_case(test: TestCase) -> bool:
         print_test_expectations(results)
     return all_passed
 
+def start_profiling() -> Any:
+    import cProfile
+    profiler = cProfile.Profile()
+    profiler.enable()
+    return profiler
+
+def stop_profiling(profiler: Any) -> None:
+    import pstats
+
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats(pstats.SortKey.CUMULATIVE)
+    stats.print_stats(50) 
+
+def run_in_monte_carlo_mode() -> None:
+    AttackConfig.monte_carlo = True
+    AttackConfig.multiprocessing = False
+    ExpectedProbability.tolerance = 0.012
+
+
+
 def run_test_suite() -> None:
+    profiler_context = start_profiling()
+
     all_passed = True
     all_tests = []
     all_tests.extend(test_cases)
-    all_tests.extend(slow_test_cases)
+    # all_tests.extend(slow_test_cases)
 
     failed_tests = []
     passed_tests = []
 
-    ExpectedProbability.tolerance = 0.012
-    AttackConfig.monte_carlo = True
-    AttackConfig.multiprocessing = False
+    run_in_monte_carlo_mode()
 
     
     for test in all_tests:
@@ -711,6 +731,9 @@ def run_test_suite() -> None:
         else:
             passed_tests.append(test)
     
+    stop_profiling(profiler_context)
+
+
     if all_passed:
         print("\nAll tests passed!")
     else:

@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional, Union, Protocol, Dict
-from ..dice import DiceFormula, D6, D3
+from probability.dice import DiceFormula, D6, D3
 from copy import deepcopy
-from ..distribution import Distribution
+from probability.distribution import Distribution
 
 @dataclass
 class DieResult:

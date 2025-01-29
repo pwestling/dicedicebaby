@@ -54,7 +54,7 @@ def close_multiprocessing_pool():
 @dataclass
 class Distribution(Generic[T]):
 
-    EPSILON : ClassVar[Fraction] = Fraction(1, 100000000000000)
+    EPSILON : ClassVar[Fraction] = Fraction(1, 10000)
     PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 1000000)
     MAX_ENTRIES_ACHIEVED : ClassVar[int] = 0
     MAX_ENTRIES_ALLOWED : ClassVar[int] = 1000
@@ -62,6 +62,7 @@ class Distribution(Generic[T]):
 
 
     probabilities: Dict[T, Fraction]
+
 
     def __str__(self) -> str:
         joiner = ",\n"
