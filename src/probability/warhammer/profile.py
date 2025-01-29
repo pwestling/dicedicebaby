@@ -10,6 +10,7 @@ class DieResult:
     value: int
     sequence: Optional['AttackSequence']
     passes_check: Union[bool, None] = None
+    is_critical: bool = False
 
 
     def __str__(self) -> str:
@@ -40,6 +41,8 @@ class AttackStage(Enum):
     ATTACKS = auto()
     HITS = auto()
     WOUNDS = auto()
+    MORTAL_WOUNDS = auto()
+    MORTAL_DAMAGE = auto()
     FAILED_SAVES = auto()
     DAMAGE = auto()
     FELT_DMG = auto()
@@ -151,8 +154,9 @@ class Defender:
             return None
         index = 0
         current_profile = self.profiles[index]
-        while num_models_slain >= current_profile.models:
-            num_models_slain -= current_profile.models
+        remaining_models = num_models_slain
+        while remaining_models >= current_profile.models:
+            remaining_models -= current_profile.models
             index += 1
             if index >= len(self.profiles):
                 return None
@@ -209,6 +213,30 @@ class AttackSequence:
         new_frozen[stage] = self.get_value(stage) + self.get_frozen(stage)
         new_values[stage] = 0
         return AttackSequence(values=new_values, frozen=new_frozen)
+
+    def freeze_quant(self, stage: AttackStage, quant: int) -> 'AttackSequence':
+        """Freeze a value at a stage"""
+        new_values = self.values.copy()
+        new_frozen = self.frozen.copy()
+        if quant > self.get_value(stage):
+            raise ValueError(f"Cannot freeze more than the value at stage {stage}")
+        new_frozen[stage] = quant
+        new_values[stage] = self.get_value(stage) - quant
+        return AttackSequence(values=new_values, frozen=new_frozen)
+
+    def zero_out(self, stage: AttackStage) -> 'AttackSequence':
+        """Zero out a value at a stage"""
+        new_values = self.values.copy()
+        new_frozen = self.frozen.copy()
+        new_values[stage] = 0
+        new_frozen[stage] = 0
+        return AttackSequence(values=new_values, frozen=new_frozen)
+
+    def zero_frozen(self, stage: AttackStage) -> 'AttackSequence':
+        """Zero out a frozen value at a stage"""
+        new_frozen = self.frozen.copy()
+        new_frozen[stage] = 0
+        return AttackSequence(values=self.values, frozen=new_frozen)
 
     def freeze_one(self, stage: AttackStage) -> 'AttackSequence':
         """Freeze a value at a stage"""
@@ -343,6 +371,12 @@ class RerollAllFails(Modifier):
 @dataclass
 class LethalHits(Modifier):
     """Automatically wound on hit rolls of 6"""
+
+    def crit_hit_auto_wound(self, result: DieResult) -> DieResult:
+        if result.is_critical:
+            return DieResult(result.value, AttackSequence.create(1, AttackStage.WOUNDS)
+            .with_frozen(AttackStage.HITS, 1), True)
+        return result
     
     def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 
                    profile: AttackProfile, defender: DefenderProfile,
@@ -351,14 +385,18 @@ class LethalHits(Modifier):
         if stage != AttackStage.HITS:
             return value
 
-        result = value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
-            AttackSequence.create(1, AttackStage.WOUNDS)
-            .with_frozen(AttackStage.HITS, 1), True)))
+        result = value.map(self.crit_hit_auto_wound)
         return result
 
 @dataclass
 class DevastatingWounds(Modifier):
     """On wound rolls of 6, ignore armor saves"""
+
+    def crit_wound_mortal_wound(self, result: DieResult) -> DieResult:
+        if result.is_critical:
+            return DieResult(result.value, AttackSequence.create(1, AttackStage.MORTAL_WOUNDS)
+            .with_frozen(AttackStage.WOUNDS, 1), True)
+        return result
     
     def modify_roll(self, value: Distribution[DieResult], stage: AttackStage, 
                    profile: AttackProfile, defender: DefenderProfile,
@@ -367,9 +405,7 @@ class DevastatingWounds(Modifier):
         if stage != AttackStage.WOUNDS:
             return value
             
-        return value.bind_on_match(DieResult(6, None), lambda _: Distribution.singleton(DieResult(6, 
-            AttackSequence.create(1, AttackStage.FAILED_SAVES)
-            .with_frozen(AttackStage.WOUNDS, 1))))
+        return value.map(self.crit_wound_mortal_wound)
 
 SPACE_MARINE_PROFILE = DefenderProfile(
     name="Space Marine",

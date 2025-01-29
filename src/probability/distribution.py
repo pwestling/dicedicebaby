@@ -22,7 +22,7 @@ F = TypeVar('F', bound=Callable[..., Any])  # Function type
 
 repeat_cache: Dict[Tuple['Distribution', int], 'Distribution'] = {}
 
-PARALLEL_THRESHOLD = 10000  # Threshold for parallel processing
+PARALLEL_THRESHOLD = 1000000000000  # Threshold for parallel processing
 CHUNK_SIZE = 1000  # Size of chunks for parallel processing
 NUM_PROCESSES = os.cpu_count() or 1  # Number of CPU cores to use
 
@@ -44,19 +44,26 @@ class Box(Generic[T]):
     def __init__(self, value: T):
         self.value = value
 
+MULTIPROCESSING_POOL: multiprocessing.pool.Pool | None = None
+
+def close_multiprocessing_pool():
+    global MULTIPROCESSING_POOL
+    if MULTIPROCESSING_POOL is not None:
+        MULTIPROCESSING_POOL.close()
+        MULTIPROCESSING_POOL = None
 
 @dataclass
 class Distribution(Generic[T]):
 
     EPSILON : ClassVar[Fraction] = Fraction(1, 100000000000000)
-    PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 100000)
+    PRUNE_FACTOR : ClassVar[Fraction | None] = Fraction(1, 1000000)
     MAX_ENTRIES_ACHIEVED : ClassVar[int] = 0
+    MAX_ENTRIES_ALLOWED : ClassVar[int] = 1000
+    PROBABILITY_TO_DISCARD : ClassVar[Fraction] = Fraction(1, 10000)
 
 
     probabilities: Dict[T, Fraction]
 
-    def __post_init__(self):
-        Distribution.MAX_ENTRIES_ACHIEVED = max(Distribution.MAX_ENTRIES_ACHIEVED, len(self.probabilities))
 
     def __str__(self) -> str:
         joiner = ",\n"
@@ -73,6 +80,19 @@ class Distribution(Generic[T]):
             items = [f"{str(k)}:{float(v)}" for k, v in self.probabilities.items()]
             return f"Dist[{joiner.join(items)}]"
     
+    def limit_entries(self) -> 'Dict[T, Fraction]':
+        # keep only the top n most probable entries
+        sorted_items = sorted(self.probabilities.items(), key=lambda x: x[1], reverse=True)
+        limited_items = {}
+        total_prob = Fraction(0)
+        for x, p in sorted_items:
+            limited_items[x] = p
+            total_prob += p
+            if 1 - total_prob < Distribution.PROBABILITY_TO_DISCARD:
+                break
+        print(f"Discarding {len(sorted_items) - len(limited_items)} items out of {len(sorted_items)} with prob mass {float(1 - total_prob)}")
+        return {x: p / total_prob for x, p in limited_items.items()}
+
     @classmethod
     def singleton(cls, x: T) -> 'Distribution[T]':
         return cls({x: Fraction(1)})
@@ -92,6 +112,9 @@ class Distribution(Generic[T]):
             y = f(x)
             result[y] = result.get(y, Fraction(0)) + p
         return Distribution(result)
+
+    def map_probabilities(self, f: Callable[[Fraction], Fraction]) -> 'Distribution[T]':
+        return Distribution({x: f(p) for x, p in self.probabilities.items()})
     
     def filter(self, pred: Callable[[T], bool], 
                if_true: Callable[[T], U], 
@@ -138,9 +161,9 @@ class Distribution(Generic[T]):
 
     def combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
         # If distributions are large enough, use parallel processing
-        # if len(self.probabilities) * len(other.probabilities) > PARALLEL_THRESHOLD:
-        #     return self._parallel_combine(other, f)
-        return self._sequential_combine(other, f)
+        if len(self.probabilities) * len(other.probabilities) > PARALLEL_THRESHOLD:
+            return self._parallel_combine(other, f)
+        return self._sequential_combine(other, f).prune()
 
     def _sequential_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
         result: Dict[U, Fraction] = {}
@@ -150,15 +173,21 @@ class Distribution(Generic[T]):
                 result[z] = result.get(z, Fraction(0)) + p1 * p2
         return Distribution(result)
 
+    def _get_multiprocessing_pool(self) -> multiprocessing.pool.Pool:
+        global MULTIPROCESSING_POOL
+        if MULTIPROCESSING_POOL is None:
+            MULTIPROCESSING_POOL = DillPool(NUM_PROCESSES)
+        return MULTIPROCESSING_POOL
+
     def _parallel_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
         items1 = list(self.probabilities.items())
         chunks = [items1[i:i + CHUNK_SIZE] for i in range(0, len(items1), CHUNK_SIZE)]
-        
-        with DillPool(NUM_PROCESSES) as pool:
-            process_chunk = partial(_process_chunk_combine, 
-                                   other_probs=other.probabilities,
-                                   f=f)
-            results = pool.map(process_chunk, chunks)
+        pool = self._get_multiprocessing_pool()
+
+        process_chunk = partial(_process_chunk_combine, 
+                                other_probs=other.probabilities,
+                                f=f)
+        results = pool.map(process_chunk, chunks)
         
         # Merge all partial results
         final_result: Dict[U, Fraction] = {}
@@ -201,8 +230,8 @@ class Distribution(Generic[T]):
         
     def bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
         # If distribution is large enough, use parallel processing
-        # if len(self.probabilities) > PARALLEL_THRESHOLD:
-        #     return self._parallel_bind(f)
+        if len(self.probabilities) > PARALLEL_THRESHOLD:
+            return self._parallel_bind(f)
         return self._sequential_bind(f)
 
     def _sequential_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
@@ -215,14 +244,14 @@ class Distribution(Generic[T]):
             # Scale its probabilities by p1 and merge into result
             for y, p2 in dist.probabilities.items():
                 result[y] = result.get(y, Fraction(0)) + p1 * p2
-        return Distribution(result)
+        return Distribution(result).prune()
 
     def _parallel_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
         items = list(self.probabilities.items())
         chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
-        
-        with DillPool(NUM_PROCESSES) as pool:
-            results = pool.map(partial(_process_chunk_bind, f=f), chunks)
+        pool = self._get_multiprocessing_pool()
+        process_chunk = partial(_process_chunk_bind, f=f)
+        results = pool.map(process_chunk, chunks)
         
         # Merge all partial results
         final_result: Dict[U, Fraction] = {}

@@ -13,7 +13,7 @@ class ExpectedProbability:
     stage: AttackStage
     value: int
     probability: float
-    tolerance: float = 0.00001
+    tolerance: float = 0.0001
 
 @dataclass
 class TestCase:
@@ -23,17 +23,7 @@ class TestCase:
     modifiers: List[Modifier]
     expected: List[ExpectedProbability]
 
-@dataclass
-class Distribution:
-    probabilities: Dict[str, float]
 
-@dataclass
-class AttackResults:
-    attacks: Distribution
-    hits: Distribution
-    wounds: Distribution
-    damage: Distribution
-    timing: Optional[Dict[str, float]]
 
 basic_profile = AttackProfile(
     name="Test Profile",
@@ -92,13 +82,22 @@ test_cases = [
             ExpectedProbability(AttackStage.WOUNDS, 7, 0.00781208137752915),
             
             # Failed saves
-            ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.08946718186289958),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.2578759947812988),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.318552699435722),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.21861459765196609),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.0900157087176373),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.022232902813852855),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 6, 0.0030467831363588625),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.1948847471315175),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.35900679066688196),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.2834269531114777),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.1243067270366254),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.03270970224169408),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.005161607903314754),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 6, 0.00045021681280629815),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 7, 1.5287448355867913e-05),
+
+            # MORTAL_WOUNDS
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 0, 0.5438466243349526),
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 1, 0.3460832050790171),
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 2, 0.09438308886321625),
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 3, 0.014294785467471819),
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 4, 0.0012921013951897086),
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 5, 6.222721282617095e-05),
             
             # Damage results
             ExpectedProbability(AttackStage.DAMAGE, 0, 0.08946718186289958),
@@ -134,7 +133,7 @@ test_cases = [
             attacks=DiceFormula.constant(10),
             ballistic_skill=4,
             strength=4,
-            armor_pen=-1,
+            armor_pen=1,
             damage=DiceFormula.constant(3),
             modifiers=[],
             keywords=[]
@@ -156,7 +155,7 @@ test_cases = [
         ),
         modifiers=[],
         expected=[
-            # Hit results
+            # HITS
             ExpectedProbability(AttackStage.HITS, 0, 0.0009765625),
             ExpectedProbability(AttackStage.HITS, 1, 0.009765625),
             ExpectedProbability(AttackStage.HITS, 2, 0.0439453125),
@@ -168,8 +167,7 @@ test_cases = [
             ExpectedProbability(AttackStage.HITS, 8, 0.0439453125),
             ExpectedProbability(AttackStage.HITS, 9, 0.009765625),
             ExpectedProbability(AttackStage.HITS, 10, 0.0009765625),
-            
-            # Wound results
+            # WOUNDS
             ExpectedProbability(AttackStage.WOUNDS, 0, 0.056313514709472656),
             ExpectedProbability(AttackStage.WOUNDS, 1, 0.1877117156982422),
             ExpectedProbability(AttackStage.WOUNDS, 2, 0.2815675735473633),
@@ -181,32 +179,173 @@ test_cases = [
             ExpectedProbability(AttackStage.WOUNDS, 8, 0.00038623809814453125),
             ExpectedProbability(AttackStage.WOUNDS, 9, 2.86102294921875e-05),
             ExpectedProbability(AttackStage.WOUNDS, 10, 9.5367431640625e-07),
+            # FAILED_SAVES
+            ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.3230101973922164),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.29070983698338637),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.15504436728395063),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.05426582158511231),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.013023679966135116),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 6, 0.0021704179705361224),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 7, 0.0002478245027434842),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 8, 1.8419388717421123e-05),
             
-            # Failed saves
-            ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.41890312712869526),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.38082163356786236),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.15579051605140884),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.03776719486217386),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.006008239767024874),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.0006553377797737697),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 6, 4.862561637972608e-05),
-            ExpectedProbability(AttackStage.FAILED_SAVES, 7, 1.4128508391203703e-06),
+            # MORTAL_WOUNDS
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 0, 1),
             
-            # Damage results
-            ExpectedProbability(AttackStage.DAMAGE, 0, 0.41890312712869526),
-            ExpectedProbability(AttackStage.DAMAGE, 3, 0.38082163356786236),
-            ExpectedProbability(AttackStage.DAMAGE, 6, 0.15579051605140884),
-            ExpectedProbability(AttackStage.DAMAGE, 9, 0.03776719486217386),
-            ExpectedProbability(AttackStage.DAMAGE, 12, 0.006008239767024874),
-            ExpectedProbability(AttackStage.DAMAGE, 15, 0.0007053762469926162),
-            
-            # Models slain
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 0, 0.41890312712869526),
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 1, 0.38082163356786236),
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 2, 0.15579051605140884),
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 3, 0.03776719486217386),
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 4, 0.006008239767024874),
-            ExpectedProbability(AttackStage.MODELS_SLAIN, 5, 0.0007053762469926162),
+            # DAMAGE
+            ExpectedProbability(AttackStage.DAMAGE, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.DAMAGE, 3, 0.3230101973922164),
+            ExpectedProbability(AttackStage.DAMAGE, 6, 0.29070983698338637),
+            ExpectedProbability(AttackStage.DAMAGE, 9, 0.15504436728395063),
+            ExpectedProbability(AttackStage.DAMAGE, 12, 0.05426582158511231),
+            ExpectedProbability(AttackStage.DAMAGE, 15, 0.015460341828132145),
+            # FELT_DMG
+            ExpectedProbability(AttackStage.FELT_DMG, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.FELT_DMG, 2, 0.3230101973922164),
+            ExpectedProbability(AttackStage.FELT_DMG, 4, 0.29070983698338637),
+            ExpectedProbability(AttackStage.FELT_DMG, 6, 0.15504436728395063),
+            ExpectedProbability(AttackStage.FELT_DMG, 8, 0.05426582158511231),
+            ExpectedProbability(AttackStage.FELT_DMG, 10, 0.015460341828132145),
+            # MODELS_SLAIN
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 1, 0.3230101973922164),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 2, 0.29070983698338637),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 3, 0.15504436728395063),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 4, 0.05426582158511231),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 5, 0.015460341828132145),
+        ]
+    ),
+     TestCase(
+        name="10 attacks damage 3 vs 4 wounds",
+        attack_profile=AttackProfile(
+            name="Test Profile",
+            models=1,
+            guns_per_model=1,
+            attacks=DiceFormula.constant(10),
+            ballistic_skill=4,
+            strength=4,
+            armor_pen=1,
+            damage=DiceFormula.constant(3),
+            modifiers=[],
+            keywords=[]
+        ),
+        defender=Defender(
+            name="Test Defender",
+            profiles=[DefenderProfile(
+                name="Test Model",
+                models=5,
+                toughness=4,
+                armor_save=4,
+                invuln_save=None,
+                wounds=4,
+                feel_no_pain=None,
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            )]
+        ),
+        modifiers=[],
+        expected=[
+            # HITS
+            ExpectedProbability(AttackStage.HITS, 0, 0.0009765625),
+            ExpectedProbability(AttackStage.HITS, 1, 0.009765625),
+            ExpectedProbability(AttackStage.HITS, 2, 0.0439453125),
+            ExpectedProbability(AttackStage.HITS, 3, 0.1171875),
+            ExpectedProbability(AttackStage.HITS, 4, 0.205078125),
+            ExpectedProbability(AttackStage.HITS, 5, 0.24609375),
+            ExpectedProbability(AttackStage.HITS, 6, 0.205078125),
+            ExpectedProbability(AttackStage.HITS, 7, 0.1171875),
+            ExpectedProbability(AttackStage.HITS, 8, 0.0439453125),
+            ExpectedProbability(AttackStage.HITS, 9, 0.009765625),
+            ExpectedProbability(AttackStage.HITS, 10, 0.0009765625),
+            # WOUNDS
+            ExpectedProbability(AttackStage.WOUNDS, 0, 0.056313514709472656),
+            ExpectedProbability(AttackStage.WOUNDS, 1, 0.1877117156982422),
+            ExpectedProbability(AttackStage.WOUNDS, 2, 0.2815675735473633),
+            ExpectedProbability(AttackStage.WOUNDS, 3, 0.25028228759765625),
+            ExpectedProbability(AttackStage.WOUNDS, 4, 0.1459980010986328),
+            ExpectedProbability(AttackStage.WOUNDS, 5, 0.058399200439453125),
+            ExpectedProbability(AttackStage.WOUNDS, 6, 0.016222000122070312),
+            ExpectedProbability(AttackStage.WOUNDS, 7, 0.00308990478515625),
+            ExpectedProbability(AttackStage.WOUNDS, 8, 0.00038623809814453125),
+            ExpectedProbability(AttackStage.WOUNDS, 9, 2.86102294921875e-05),
+            ExpectedProbability(AttackStage.WOUNDS, 10, 9.5367431640625e-07),
+            # FAILED_SAVES
+            ExpectedProbability(AttackStage.FAILED_SAVES, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 1, 0.32301113929277586),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 2, 0.2907100462946218),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 3, 0.15504534406971593),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 4, 0.05426582158511231),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 5, 0.013023810204237159),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 6, 0.0021706350340395266),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 7, 0.000248072575318803),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 8, 1.8605443148910226e-05),
+            ExpectedProbability(AttackStage.FAILED_SAVES, 9, 7.442177259564091e-07),
+            # MORTAL_WOUNDS
+            ExpectedProbability(AttackStage.MORTAL_WOUNDS, 0, 1),
+            # DAMAGE
+            ExpectedProbability(AttackStage.DAMAGE, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.DAMAGE, 3, 0.32301113929277586),
+            ExpectedProbability(AttackStage.DAMAGE, 6, 0.2907100462946218),
+            ExpectedProbability(AttackStage.DAMAGE, 9, 0.15504534406971593),
+            ExpectedProbability(AttackStage.DAMAGE, 12, 0.05426582158511231),
+            ExpectedProbability(AttackStage.DAMAGE, 15, 0.013023810204237159),
+            ExpectedProbability(AttackStage.DAMAGE, 18, 0.0021706350340395266),
+            ExpectedProbability(AttackStage.DAMAGE, 21, 0.000248072575318803),
+            ExpectedProbability(AttackStage.DAMAGE, 24, 1.8605443148910226e-05),
+            ExpectedProbability(AttackStage.DAMAGE, 27, 7.442177259564091e-07),
+            # FELT_DMG
+            ExpectedProbability(AttackStage.FELT_DMG, 0, 0.16150552255135994),
+            ExpectedProbability(AttackStage.FELT_DMG, 3, 0.32301113929277586),
+            ExpectedProbability(AttackStage.FELT_DMG, 4, 0.2907100462946218),
+            ExpectedProbability(AttackStage.FELT_DMG, 7, 0.15504534406971593),
+            ExpectedProbability(AttackStage.FELT_DMG, 8, 0.05426582158511231),
+            ExpectedProbability(AttackStage.FELT_DMG, 11, 0.013023810204237159),
+            ExpectedProbability(AttackStage.FELT_DMG, 12, 0.0021706350340395266),
+            ExpectedProbability(AttackStage.FELT_DMG, 15, 0.000248072575318803),
+            ExpectedProbability(AttackStage.FELT_DMG, 16, 1.8605443148910226e-05),
+            ExpectedProbability(AttackStage.FELT_DMG, 19, 7.442177259564091e-07),
+            # MODELS_SLAIN
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 0, 0.4845166618441358),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 1, 0.44575539036433776),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 2, 0.06728963178934948),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 3, 0.0024187076093583294),
+            ExpectedProbability(AttackStage.MODELS_SLAIN, 4, 1.9349660874866636e-05),
+        ]
+    ),
+         TestCase(
+        name="20 attacks damage 2 vs 9 wounds",
+        attack_profile=AttackProfile(
+            name="Test Profile",
+            models=1,
+            guns_per_model=1,
+            attacks=DiceFormula.constant(20),
+            ballistic_skill=4,
+            strength=6,
+            armor_pen=1,
+            damage=DiceFormula.constant(3),
+            modifiers=[],
+            keywords=[]
+        ),
+        defender=Defender(
+            name="Test Defender",
+            profiles=[DefenderProfile(
+                name="Test Model",
+                models=5,
+                toughness=4,
+                armor_save=4,
+                invuln_save=None,
+                wounds=9,
+                feel_no_pain=None,
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            )]
+        ),
+        modifiers=[],
+        expected=[
+          
         ]
     )
 ]
@@ -221,16 +360,27 @@ slow_test_cases = [
             attacks=DiceFormula.constant(60),
             ballistic_skill=4,
             strength=4,
-            armor_pen=-1,
-            damage=DiceFormula(1, 3, 1),
+            armor_pen=1,
+            damage=DiceFormula(0, 0, 3),
             modifiers=[RerollAllFails(AttackStage.HITS), RerollAllFails(AttackStage.WOUNDS), LethalHits(), DevastatingWounds()],
             keywords=[]
         ),
         defender=Defender(
             name="Test Defender",
             profiles=[DefenderProfile(
-                name="Test Model",
-                models=100,
+                name="Test Model Hardy",
+                models=15,
+                toughness=4,
+                armor_save=2,
+                invuln_save=3,
+                wounds=2,
+                feel_no_pain=5,
+                modifiers=[],
+                keywords=[],
+                is_leader=False
+            ),DefenderProfile(
+                name="Test Model Soft",
+                models=15,
                 toughness=4,
                 armor_save=4,
                 invuln_save=None,
@@ -239,18 +389,7 @@ slow_test_cases = [
                 modifiers=[],
                 keywords=[],
                 is_leader=False
-            ),DefenderProfile(
-                name="Test Model",
-                models=4,
-                toughness=4,
-                armor_save=2,
-                invuln_save=3,
-                wounds=3,
-                feel_no_pain=5,
-                modifiers=[],
-                keywords=[],
-                is_leader=False
-            )]
+            ),]
         ),
         modifiers=[],
         expected=[]
@@ -273,6 +412,10 @@ def run_test_case(test: TestCase) -> bool:
             dist = results.collapsed_damage
         elif exp.stage == AttackStage.MODELS_SLAIN:
             dist = results.collapsed_slain_models
+        elif exp.stage == AttackStage.FELT_DMG:
+            dist = results.collapsed_felt_damage
+        elif exp.stage == AttackStage.MORTAL_WOUNDS:
+            dist = results.collapsed_mortal_wounds
             
         actual = float(dist.probabilities.get(AttackSequence.create(exp.value, exp.stage), 0))
         if abs(actual - exp.probability) > exp.tolerance:
@@ -280,20 +423,37 @@ def run_test_case(test: TestCase) -> bool:
             all_passed = False
     if all_passed:
         print(f"Passed: {test.name} in {results.timing.total_time:.3f} seconds")
+        if len(test.expected) == 0:
+            print(results)
+            print_test_expectations(results)
     else:
         print(f"Failed: {test.name} with results: \n{results}")
+        print_test_expectations(results)
     return all_passed
 
 def run_test_suite() -> None:
     all_passed = True
-    for test in test_cases + slow_test_cases:
+    all_tests = []
+    all_tests.extend(test_cases)
+    # all_tests.extend(slow_test_cases)
+
+    failed_tests = []
+    passed_tests = []
+    
+    for test in all_tests:
         if not run_test_case(test):
             all_passed = False
+            failed_tests.append(test)
+            break
+        else:
+            passed_tests.append(test)
     
     if all_passed:
         print("\nAll tests passed!")
     else:
         print("\nSome tests failed!")
+        print(f"Failed tests: {[test.name for test in failed_tests]}")
+        print(f"Passed tests: {[test.name for test in passed_tests]}")
         exit(1)
     
 
@@ -341,73 +501,24 @@ def run_attack_benchmark2() -> None:
 
     print(results.timing)
 
-class TestRunner:
-    @staticmethod
-    def serialize_test_case(test: TestCase) -> Dict[str, Any]:
-        """Convert a test case to JSON-serializable format"""
-        return {
-            "name": test.name,
-            "attack": {
-                "attacks": test.attack_profile.attacks.to_dict(),
-                "ballistic_skill": test.attack_profile.ballistic_skill,
-                "strength": test.attack_profile.strength,
-                "armor_pen": test.attack_profile.armor_pen,
-                "damage": test.attack_profile.damage.to_dict(),
-                "modifiers": [
-                    {
-                        "type": mod.__class__.__name__,
-                        "stage": mod.stage.name if hasattr(mod, "stage") else None
-                    }
-                    for mod in test.attack_profile.modifiers
-                ]
-            },
-            "defender": {
-                "toughness": test.defender.profiles[0].toughness,
-                "armor_save": test.defender.profiles[0].armor_save,
-                "invuln_save": test.defender.profiles[0].invuln_save,
-                "wounds": test.defender.profiles[0].wounds,
-                "models": test.defender.profiles[0].models,
-                "feel_no_pain": test.defender.profiles[0].feel_no_pain,
-                "modifiers": []  # Add defender modifiers if needed
-            },
-            "expected": [
-                {
-                    "stage": exp.stage.name,
-                    "value": exp.value,
-                    "probability": exp.probability,
-                    "tolerance": exp.tolerance
-                }
-                for exp in test.expected
-            ]
-        }
-
-    @staticmethod
-    def run_tests_standalone() -> None:
-        """Run tests by communicating via stdin/stdout"""
-        test_cases.reverse()
-        # Write test cases to stdout as JSON
-        for test in test_cases + slow_test_cases:
-            json.dump(TestRunner.serialize_test_case(test), sys.stdout)
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            
-            # Read results from stdin
-            result_line = sys.stdin.readline()
-            if not result_line:
-                print("No response from probability calculator", file=sys.stderr)
-                sys.exit(1)
-                
-            try:
-                result = json.loads(result_line)
-
-                if not result.get("success"):
-                    print(f"Test {test.name} execution failed: {result.get('error')}", file=sys.stderr)
-                    sys.exit(1)
-            except json.JSONDecodeError:
-                print(f"Invalid JSON response: {result_line}", file=sys.stderr)
-                sys.exit(1)
-         
-
+def print_test_expectations(results: AttackResults) -> None:
+    """Print test expectations in a format that can be pasted into a test case"""
+    stages = [
+        (AttackStage.HITS, results.collapsed_hits),
+        (AttackStage.WOUNDS, results.collapsed_wounds),
+        (AttackStage.FAILED_SAVES, results.collapsed_failed_saves),
+        (AttackStage.MORTAL_WOUNDS, results.collapsed_mortal_wounds),
+        (AttackStage.DAMAGE, results.collapsed_damage),
+        (AttackStage.FELT_DMG, results.collapsed_felt_damage),
+        (AttackStage.MODELS_SLAIN, results.collapsed_slain_models)
+    ]
+    
+    print("expected_probabilities=[")
+    for stage, dist in stages:
+        print(f"    # {stage.name}")
+        for seq, prob in sorted(dist.probabilities.items()):
+            print(f"    ExpectedProbability(AttackStage.{stage.name}, {seq.get_value(stage)}, {float(prob)}),")
+    print("]")
 
 if __name__ == "__main__":
     run_test_suite()
