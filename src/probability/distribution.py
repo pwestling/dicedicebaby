@@ -7,7 +7,6 @@ from functools import partial, wraps
 import random
 import os
 import multiprocessing.pool
-import dill
 import sys
 
 
@@ -177,29 +176,26 @@ class Distribution(Generic[T]):
                 result[z] = result.get(z, Fraction(0)) + p1 * p2
         return Distribution(result)
 
-    def _get_multiprocessing_pool(self) -> multiprocessing.pool.Pool:
-        global MULTIPROCESSING_POOL
-        if MULTIPROCESSING_POOL is None:
-            MULTIPROCESSING_POOL = DillPool(NUM_PROCESSES)
-        return MULTIPROCESSING_POOL
 
     def _parallel_combine(self, other: 'Distribution[J]', f: Callable[[T, J], U]) -> 'Distribution[U]':
-        items1 = list(self.probabilities.items())
-        chunks = [items1[i:i + CHUNK_SIZE] for i in range(0, len(items1), CHUNK_SIZE)]
-        pool = self._get_multiprocessing_pool()
+        # items1 = list(self.probabilities.items())
+        # chunks = [items1[i:i + CHUNK_SIZE] for i in range(0, len(items1), CHUNK_SIZE)]
+        # pool = self._get_multiprocessing_pool()
 
-        process_chunk = partial(_process_chunk_combine, 
-                                other_probs=other.probabilities,
-                                f=f)
-        results = pool.map(process_chunk, chunks)
+        # process_chunk = partial(_process_chunk_combine, 
+        #                         other_probs=other.probabilities,
+        #                         f=f)
+        # results = pool.map(process_chunk, chunks)
         
-        # Merge all partial results
-        final_result: Dict[U, Fraction] = {}
-        for partial_result in results:
-            for k, v in partial_result.items():
-                final_result[k] = final_result.get(k, Fraction(0)) + v
+        # # Merge all partial results
+        # final_result: Dict[U, Fraction] = {}
+        # for partial_result in results:
+        #     for k, v in partial_result.items():
+        #         final_result[k] = final_result.get(k, Fraction(0)) + v
         
-        return Distribution(final_result)
+        # return Distribution(final_result)
+        raise NotImplementedError("Parallel combine not implemented")
+
 
     def merge(self, other: 'Distribution[T]') -> 'Distribution[T]':
         result: Dict[T, Fraction] = {}
@@ -251,22 +247,23 @@ class Distribution(Generic[T]):
         return Distribution(result).prune()
 
     def _parallel_bind(self, f: Callable[[T], 'Distribution[U]']) -> 'Distribution[U]':
-        items = list(self.probabilities.items())
-        chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
-        pool = self._get_multiprocessing_pool()
-        process_chunk = partial(_process_chunk_bind, f=f)
-        results = pool.map(process_chunk, chunks)
+        # items = list(self.probabilities.items())
+        # chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
+        # pool = self._get_multiprocessing_pool()
+        # process_chunk = partial(_process_chunk_bind, f=f)
+        # results = pool.map(process_chunk, chunks)
         
-        # Merge all partial results
-        final_result: Dict[U, Fraction] = {}
-        for partial_result in results:
-            if isinstance(partial_result, ExceptionWrapper):
-                partial_result.re_raise()
-            else:
-                for k, v in partial_result.items():
-                    final_result[k] = final_result.get(k, Fraction(0)) + v
+        # # Merge all partial results
+        # final_result: Dict[U, Fraction] = {}
+        # for partial_result in results:
+        #     if isinstance(partial_result, ExceptionWrapper):
+        #         partial_result.re_raise()
+        #     else:
+        #         for k, v in partial_result.items():
+        #             final_result[k] = final_result.get(k, Fraction(0)) + v
         
-        return Distribution(final_result)
+        # return Distribution(final_result)
+        raise NotImplementedError("Parallel bind not implemented")
 
     def bind_on_match(self, key_pred: Callable[[T], bool], f: Callable[[T], 'Distribution[T]']) -> 'Distribution[T]':
         
@@ -354,25 +351,6 @@ def _process_chunk_bind(chunk: List[Tuple[T, Fraction]],
         print(f"Error in chunk processing: {str(e)}\n{traceback.format_exc()}", file=sys.stderr)
         return ExceptionWrapper(e)
 
-
-# Create a Pool subclass that uses dill for serialization
-class DillPool(multiprocessing.pool.Pool):
-    def __init__(self, *args, **kwargs):
-        kwargs['context'] = multiprocessing.get_context()
-        super().__init__(*args, **kwargs)
-        self._ctx = kwargs['context']
-
-    def _setup_queues(self):
-        self._inqueue = self._ctx.Queue()
-        self._outqueue = self._ctx.Queue()
-        self._quick_put = self._inqueue._writer.send # type: ignore
-        self._quick_get = self._outqueue._reader.recv # type: ignore
-
-    def _Popen(self, process_obj):
-        return self._ctx.Process(
-            target=process_obj.run,
-            args=(self._inqueue, self._outqueue, dill.dumps, dill.loads)
-        )
 
 
 if __name__ == "__main__":

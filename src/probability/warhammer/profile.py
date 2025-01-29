@@ -411,7 +411,8 @@ class DevastatingWounds(Modifier):
         if stage != AttackStage.WOUNDS:
             return value
             
-        return value.map(self.crit_wound_mortal_wound)
+        result = value.map(self.crit_wound_mortal_wound)
+        return result
 
 SPACE_MARINE_PROFILE = DefenderProfile(
     name="Space Marine",

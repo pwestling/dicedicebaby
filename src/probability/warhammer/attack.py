@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, asdict
 from time import perf_counter
 import sys
 import json
-from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 import os
 
 
@@ -51,6 +51,8 @@ def roll_for_attacks(profile: AttackProfile, modifiers: List[Modifier]) -> Distr
     
     return model_dist
 
+
+   
 
 def merge_stage(old_seq: AttackSequence, roll_seq_boxed: Union[AttackSequence, DieResult], stage: AttackStage) -> AttackSequence:
     """Generic merge function that adds values for a specific stage."""
@@ -119,6 +121,8 @@ class AttackConfig:
     batch_damage_roll = True
     monte_carlo = False
     monte_carlo_simulations = 10000
+    multiprocessing = True
+
 
 T = TypeVar("T")
 def monte_carlo(dist: Distribution[T]) -> Distribution[T]:
@@ -462,9 +466,16 @@ def simulate_attacks(
         start_time = perf_counter()
         batch_size = get_batch_size()
         num_tasks = (AttackConfig.monte_carlo_simulations + batch_size - 1) // batch_size
-        with Pool() as pool:
-            tasks = [(attack_profile, defender, modifiers, batch_size)] * num_tasks
-            results = pool.map(_run_monte_carlo_batch, tasks)
+        if AttackConfig.multiprocessing:
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+                tasks = [(attack_profile, defender, modifiers, batch_size)] * num_tasks
+                futures = [executor.submit(_run_monte_carlo_batch, task) for task in tasks]
+                results = [future.result() for future in futures]
+        else:
+            results = []
+            for _ in range(AttackConfig.monte_carlo_simulations):
+                results.append(simulate_attacks_internal(attack_profile, defender, modifiers))
+
         first = results[0]
         for result in results[1:]:
             first = first + result

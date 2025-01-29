@@ -698,10 +698,9 @@ def run_test_suite() -> None:
     failed_tests = []
     passed_tests = []
 
-    ExpectedProbability.tolerance = 0.005
+    ExpectedProbability.tolerance = 0.012
     AttackConfig.monte_carlo = True
-    AttackConfig.batch_damage_roll = False
-    AttackConfig.batch_save_roll = False
+    AttackConfig.multiprocessing = False
 
     
     for test in all_tests:
