@@ -33,7 +33,7 @@ def perform_rolls(quant_stage: AttackStage, die_roll: Distribution[DieResult], s
     combined = monte_carlo_repeat(unwrapped, quant)
     combined = combined.prune()
  
-    next_state = state.freeze_quant_mut(quant_stage, quant) if not void_frozen else state.void_quant_mut(quant_stage, quant)
+    next_state = state.freeze_quant(quant_stage, quant) if not void_frozen else state.void_quant(quant_stage, quant)
     result = combined.map(lambda x: x + next_state)
     return result
 
